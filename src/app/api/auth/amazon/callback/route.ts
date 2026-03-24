@@ -74,7 +74,10 @@ export async function GET(request: NextRequest) {
     return response
 
   } catch (err) {
-    console.error('Amazon OAuth callback error:', err)
-    return NextResponse.redirect(new URL('/dashboard?amazon_error=token_exchange_failed', request.url))
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('Amazon OAuth callback error:', msg)
+    const url = new URL('/dashboard', request.url)
+    url.searchParams.set('amazon_error', msg.slice(0, 200))
+    return NextResponse.redirect(url)
   }
 }

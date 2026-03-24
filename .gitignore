@@ -1,0 +1,17 @@
+# Env — never commit secrets
+.env
+.env.local
+.env*.local
+
+# Next.js
+.next/
+out/
+
+# Dependencies
+node_modules/
+
+# Misc
+*.pem
+.DS_Store
+*.tsbuildinfo
+npm-debug.log*

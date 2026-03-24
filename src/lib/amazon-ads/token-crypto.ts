@@ -5,6 +5,7 @@ const ALGORITHM = 'aes-256-gcm'
 
 // Encrypt a token for storage in the database
 export function encryptToken(plaintext: string): string {
+  if (!TOKEN_ENCRYPT_KEY) throw new Error('TOKEN_ENCRYPTION_KEY env var is not set')
   const key = Buffer.from(TOKEN_ENCRYPT_KEY, 'hex')  // 32 bytes
   const iv  = randomBytes(12)                         // 96-bit IV for GCM
   const cipher = createCipheriv(ALGORITHM, key, iv)

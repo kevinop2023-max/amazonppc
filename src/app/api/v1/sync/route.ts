@@ -48,8 +48,8 @@ export async function POST(request: NextRequest) {
     .eq('triggered_by', 'manual')
     .gte('started_at', since.toISOString())
 
-  if ((count ?? 0) >= 3) {
-    return NextResponse.json({ error: 'Manual sync limit reached (3 per day).' }, { status: 429 })
+  if ((count ?? 0) >= 10) {
+    return NextResponse.json({ error: 'Manual sync limit reached (10 per day).' }, { status: 429 })
   }
 
   // Run the actual sync

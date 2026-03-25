@@ -23,7 +23,7 @@ export default function SyncStatus({ sync, profileId }: { sync: SyncLog | null; 
         body: { profile_id: profileId, triggered_by: 'manual' },
       })
       if (error) throw error
-      setMsg(data?.success ? `✓ Synced ${data.records_upserted ?? 0} records` : (data?.error ?? 'Sync failed'))
+      setMsg(data?.success ? '✓ Sync started — check back in 3–5 minutes' : (data?.error ?? 'Sync failed'))
     } catch (e: any) {
       setMsg(e?.message ?? 'Failed to trigger sync')
     }

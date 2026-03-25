@@ -78,7 +78,7 @@ export default async function DashboardPage({
       .gte('date', startStr),
     supabase
       .from('sync_logs')
-      .select('status, started_at, completed_at, error_message')
+      .select('id, status, started_at, completed_at, error_message, records_upserted')
       .eq('profile_id', profileId)
       .order('started_at', { ascending: false })
       .limit(1)

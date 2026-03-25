@@ -52,8 +52,17 @@ export async function GET(request: NextRequest) {
 
     // Persist each profile to the database (upsert)
     const serviceClient = createServiceClient()
+
+    // Ensure user row exists (trigger may have missed it)
+    await serviceClient.from('users').upsert({
+      id:    user.id,
+      email: user.email!,
+      name:  user.user_metadata?.name ?? user.email!.split('@')[0],
+      plan:  'free',
+    }, { onConflict: 'id' })
+
     for (const profile of profiles) {
-      await serviceClient
+      const { error: upsertErr } = await serviceClient
         .from('amazon_profiles')
         .upsert({
           profile_id:        profile.profileId,
@@ -66,6 +75,7 @@ export async function GET(request: NextRequest) {
           token_expires_at:  expiresAt.toISOString(),
           sync_enabled:      true,
         }, { onConflict: 'profile_id' })
+      if (upsertErr) throw new Error(`Profile save failed: ${upsertErr.message}`)
     }
 
     // Clear the state cookie

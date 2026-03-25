@@ -24,9 +24,9 @@ const CORS = {
 const SP_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
 const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
 const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
 const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
-const SB_ST   = ['date','campaignId','adGroupId','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
 
 // ── Crypto ───────────────────────────────────────────────────────────────────
 
@@ -152,13 +152,13 @@ async function upsertAll(db: any, profileId: number, data: Record<string, any[]>
   total += await upsert(db, 'sp_search_terms', sst.map((r: any) => ({ profile_id: profileId, campaign_id: n(r.campaignId), ad_group_id: n(r.adGroupId), date: r.date, customer_search_term: r.targeting ?? '', keyword_id: r.keywordId ? n(r.keywordId) : null, match_type: r.matchType?.toLowerCase() ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })), 'profile_id,campaign_id,ad_group_id,customer_search_term,date')
 
   const sb = data.sbCamp ?? []
-  total += await upsert(db, 'sb_campaigns', sb.map((r: any) => ({ profile_id: profileId, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })), 'profile_id,campaign_id,date')
+  total += await upsert(db, 'sb_campaigns', sb.map((r: any) => ({ profile_id: profileId, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: 0, orders: 0, units: 0 })), 'profile_id,campaign_id,date')
 
   const sbkw = (data.sbKw ?? []).filter((r: any) => r.keywordId)
   total += await upsert(db, 'sb_keywords', sbkw.map((r: any) => ({ profile_id: profileId, keyword_id: n(r.keywordId), campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, keyword_text: r.keyword ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })), 'profile_id,keyword_id,date')
 
   const sbst = data.sbSt ?? []
-  total += await upsert(db, 'sb_search_terms', sbst.map((r: any) => ({ profile_id: profileId, campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, customer_search_term: r.targeting ?? '', impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })), 'profile_id,campaign_id,ad_group_id,customer_search_term,date')
+  total += await upsert(db, 'sb_search_terms', sbst.map((r: any) => ({ profile_id: profileId, campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, customer_search_term: r.targeting ?? r.searchTerm ?? r.query ?? '', impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: 0, orders: 0, units: 0 })), 'profile_id,campaign_id,ad_group_id,customer_search_term,date')
 
   return total
 }

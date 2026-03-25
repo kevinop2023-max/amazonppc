@@ -50,7 +50,16 @@ async function getReportStatus(token: string, profileId: string, reportId: strin
 }
 
 async function getDownloadUrl(token: string, profileId: string, reportId: string): Promise<string> {
-  const res = await fetch(`${AMAZON_ADS_BASE}/reporting/reports/${reportId}/download`, { headers: adsHeaders(token, profileId) })
+  // Use redirect:'manual' so the Amazon Authorization header is NOT forwarded to S3
+  const res = await fetch(`${AMAZON_ADS_BASE}/reporting/reports/${reportId}/download`, {
+    headers: adsHeaders(token, profileId),
+    redirect: 'manual',
+  })
+  // 302/303 redirect → Location header is the S3 pre-signed URL
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get('location')
+    if (location) return location
+  }
   if (!res.ok) throw new Error(`Download URL failed: ${res.status} ${await res.text()}`)
   const d = await res.json()
   const url = d.url ?? d.location ?? d.downloadUrl

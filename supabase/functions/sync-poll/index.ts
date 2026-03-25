@@ -47,24 +47,7 @@ async function getReportStatus(token: string, profileId: string, reportId: strin
   const res = await fetch(`${AMAZON_ADS_BASE}/reporting/reports/${reportId}`, { headers: adsHeaders(token, profileId) })
   if (!res.ok) throw new Error(`Status check failed: ${res.status} ${await res.text()}`)
   return res.json()
-}
-
-async function getDownloadUrl(token: string, profileId: string, reportId: string): Promise<string> {
-  // Use redirect:'manual' so the Amazon Authorization header is NOT forwarded to S3
-  const res = await fetch(`${AMAZON_ADS_BASE}/reporting/reports/${reportId}/download`, {
-    headers: adsHeaders(token, profileId),
-    redirect: 'manual',
-  })
-  // 302/303 redirect → Location header is the S3 pre-signed URL
-  if (res.status >= 300 && res.status < 400) {
-    const location = res.headers.get('location')
-    if (location) return location
-  }
-  if (!res.ok) throw new Error(`Download URL failed: ${res.status} ${await res.text()}`)
-  const d = await res.json()
-  const url = d.url ?? d.location ?? d.downloadUrl
-  if (!url) throw new Error(`No download URL: ${JSON.stringify(d)}`)
-  return url
+  // Note: when COMPLETED, Amazon includes a `url` field directly in this response
 }
 
 async function downloadAndParse(url: string): Promise<any[]> {
@@ -182,17 +165,19 @@ Deno.serve(async (req) => {
         try {
           const s = await getReportStatus(token, amazonPid, reportId as string)
           console.log(`[poll] ${name}: ${s.status}`)
-          return { name, reportId, status: s.status }
+          // Amazon includes the download URL directly in the status response when COMPLETED
+          const url = s.url ?? s.location ?? s.downloadUrl ?? null
+          return { name, reportId, status: s.status, url }
         } catch (e) {
           console.error(`[poll] ${name} status error: ${e}`)
-          return { name, reportId, status: 'FAILED' }
+          return { name, reportId, status: 'FAILED', url: null }
         }
       })
     )
 
-    const allDone    = statuses.every(s => s.status === 'COMPLETED' || s.status === 'FAILED')
-    const anyFailed  = statuses.some(s => s.status === 'FAILED')
-    const completed  = statuses.filter(s => s.status === 'COMPLETED')
+    const allDone   = statuses.every(s => s.status === 'COMPLETED' || s.status === 'FAILED')
+    const anyFailed = statuses.some(s => s.status === 'FAILED')
+    const completed = statuses.filter(s => s.status === 'COMPLETED')
 
     if (!allDone) {
       const pending = statuses.filter(s => s.status !== 'COMPLETED').map(s => s.name)
@@ -209,9 +194,22 @@ Deno.serve(async (req) => {
     const dataMap: Record<string, any[]> = {}
 
     await Promise.all(
-      completed.map(async ({ name, reportId }) => {
+      completed.map(async ({ name, reportId, url: statusUrl }) => {
         try {
-          const url = await getDownloadUrl(token, amazonPid, reportId as string)
+          // Use URL from status response; fall back to download endpoint if missing
+          let url = statusUrl
+          if (!url) {
+            const res = await fetch(`${AMAZON_ADS_BASE}/reporting/reports/${reportId}/download`, {
+              headers: adsHeaders(token, amazonPid),
+              redirect: 'manual',
+            })
+            url = res.headers.get('location') ?? null
+            if (!url && res.ok) {
+              const d = await res.json()
+              url = d.url ?? d.location ?? d.downloadUrl
+            }
+          }
+          if (!url) throw new Error('No download URL available')
           dataMap[name] = await downloadAndParse(url)
           console.log(`[poll] Downloaded ${nameMap[name] ?? name}: ${dataMap[name].length} rows`)
         } catch (e) {

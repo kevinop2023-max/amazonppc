@@ -54,12 +54,13 @@ async function createAndWaitReport(
   startDate: string,
   endDate: string,
 ): Promise<any[]> {
+  console.log(`[sync] Creating report: ${name} (reportTypeId=${reportTypeId}, groupBy=${groupBy})`)
   const { reportId } = await client.createReport({
     name,
     startDate,
     endDate,
     configuration: { adProduct, groupBy, columns, reportTypeId, timeUnit: 'DAILY', format: 'GZIP_JSON' },
-  })
+  }).catch(err => { throw new Error(`[${name}] ${err.message}`) })
 
   const downloadUrl = await client.waitForReport(reportId)
   return downloadAndParse(downloadUrl)
@@ -244,16 +245,14 @@ export async function syncProfile(profileId: number, triggeredBy: 'scheduler' | 
     const client = await getClientForProfile(profileId)
     let totalRecords = 0
 
-    // ── Request all reports in parallel ──────────────────────────────────
-    const [spCampRows, spAdgRows, spKwRows, spStRows, sbCampRows, sbKwRows, sbStRows] = await Promise.all([
-      createAndWaitReport(client, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMPAIGN_COLS,   startDate, endDate),
-      createAndWaitReport(client, 'SP AdGroups',  'SPONSORED_PRODUCTS', 'spAdGroups',   ['adGroup'],    SP_ADGROUP_COLS,    startDate, endDate),
-      createAndWaitReport(client, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KEYWORD_COLS,    startDate, endDate),
-      createAndWaitReport(client, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_SEARCHTERM_COLS, startDate, endDate),
-      createAndWaitReport(client, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',  ['campaign'],   SB_CAMPAIGN_COLS,   startDate, endDate).catch(() => []),
-      createAndWaitReport(client, 'SB Keywords',  'SPONSORED_BRANDS',   'sbTargeting',  ['targeting'],  SB_KEYWORD_COLS,    startDate, endDate).catch(() => []),
-      createAndWaitReport(client, 'SB Terms',     'SPONSORED_BRANDS',   'sbSearchTerm', ['searchTerm'], SB_SEARCHTERM_COLS, startDate, endDate).catch(() => []),
-    ])
+    // ── Request reports sequentially for better error tracing ────────────
+    const spCampRows = await createAndWaitReport(client, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMPAIGN_COLS,   startDate, endDate)
+    const spAdgRows  = await createAndWaitReport(client, 'SP AdGroups',  'SPONSORED_PRODUCTS', 'spAdGroups',   ['adGroup'],    SP_ADGROUP_COLS,    startDate, endDate)
+    const spKwRows   = await createAndWaitReport(client, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KEYWORD_COLS,    startDate, endDate)
+    const spStRows   = await createAndWaitReport(client, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_SEARCHTERM_COLS, startDate, endDate)
+    const sbCampRows = await createAndWaitReport(client, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',  ['campaign'],   SB_CAMPAIGN_COLS,   startDate, endDate).catch(() => [])
+    const sbKwRows   = await createAndWaitReport(client, 'SB Keywords',  'SPONSORED_BRANDS',   'sbTargeting',  ['targeting'],  SB_KEYWORD_COLS,    startDate, endDate).catch(() => [])
+    const sbStRows   = await createAndWaitReport(client, 'SB Terms',     'SPONSORED_BRANDS',   'sbSearchTerm', ['searchTerm'], SB_SEARCHTERM_COLS, startDate, endDate).catch(() => [])
 
     // ── Upsert all data ───────────────────────────────────────────────────
     totalRecords += await upsertSpCampaigns(db,  profileId, spCampRows)

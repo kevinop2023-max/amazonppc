@@ -12,13 +12,14 @@ const gunzip = promisify(zlib.gunzip)
 
 // ── Report column definitions ──────────────────────────────────────────────
 
-const SP_CAMPAIGN_COLS  = ['date','campaignId','campaignName','state','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-const SP_ADGROUP_COLS   = ['date','campaignId','adGroupId','adGroupName','state','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-const SP_KEYWORD_COLS   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','state','bid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-const SP_SEARCHTERM_COLS= ['date','campaignId','adGroupId','keywordId','matchType','query','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-const SB_CAMPAIGN_COLS  = ['date','campaignId','campaignName','state','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-const SB_KEYWORD_COLS   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','state','bid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-const SB_SEARCHTERM_COLS= ['date','campaignId','adGroupId','query','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+// Amazon Ads API v3 column names (state→campaignStatus/adKeywordStatus, bid→keywordBid, query→targeting)
+const SP_CAMPAIGN_COLS  = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+const SP_ADGROUP_COLS   = ['date','campaignId','adGroupId','adGroupName','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+const SP_KEYWORD_COLS   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+const SP_SEARCHTERM_COLS= ['date','campaignId','adGroupId','keywordId','matchType','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+const SB_CAMPAIGN_COLS  = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+const SB_KEYWORD_COLS   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+const SB_SEARCHTERM_COLS= ['date','campaignId','adGroupId','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -72,7 +73,8 @@ async function upsertSpCampaigns(db: SupabaseClient, profileId: number, rows: an
     campaign_id:        Number(r.campaignId),
     date:               r.date,
     campaign_name:      r.campaignName ?? '',
-    state:              r.state ?? 'enabled',
+    state:              r.campaignStatus ?? 'enabled',
+    daily_budget_cents: toCents(r.campaignBudgetAmount),
     impressions:        Number(r.impressions ?? 0),
     clicks:             Number(r.clicks ?? 0),
     spend_cents:        toCents(r.cost),
@@ -92,7 +94,6 @@ async function upsertSpAdGroups(db: SupabaseClient, profileId: number, rows: any
     campaign_id:   Number(r.campaignId),
     date:          r.date,
     ad_group_name: r.adGroupName ?? '',
-    state:         r.state ?? 'enabled',
     impressions:   Number(r.impressions ?? 0),
     clicks:        Number(r.clicks ?? 0),
     spend_cents:   toCents(r.cost),
@@ -116,8 +117,8 @@ async function upsertSpKeywords(db: SupabaseClient, profileId: number, rows: any
       date:         r.date,
       keyword_text: r.keyword ?? '',
       match_type:   (r.matchType ?? 'broad').toLowerCase(),
-      state:        r.state ?? 'enabled',
-      bid_cents:    toCents(r.bid),
+      state:        r.adKeywordStatus ?? 'enabled',
+      bid_cents:    toCents(r.keywordBid),
       impressions:  Number(r.impressions ?? 0),
       clicks:       Number(r.clicks ?? 0),
       spend_cents:  toCents(r.cost),
@@ -137,7 +138,7 @@ async function upsertSpSearchTerms(db: SupabaseClient, profileId: number, rows: 
     campaign_id:          Number(r.campaignId),
     ad_group_id:          Number(r.adGroupId),
     date:                 r.date,
-    customer_search_term: r.query ?? '',
+    customer_search_term: r.targeting ?? '',
     keyword_id:           r.keywordId ? Number(r.keywordId) : null,
     match_type:           r.matchType ? r.matchType.toLowerCase() : null,
     impressions:          Number(r.impressions ?? 0),
@@ -159,13 +160,14 @@ async function upsertSbCampaigns(db: SupabaseClient, profileId: number, rows: an
     campaign_id:   Number(r.campaignId),
     date:          r.date,
     campaign_name: r.campaignName ?? '',
-    state:         r.state ?? 'enabled',
-    impressions:   Number(r.impressions ?? 0),
-    clicks:        Number(r.clicks ?? 0),
-    spend_cents:   toCents(r.cost),
-    sales_cents:   toCents(r.sales14d),
-    orders:        Number(r.purchases14d ?? 0),
-    units:         Number(r.unitsSoldClicks14d ?? 0),
+    state:              r.campaignStatus ?? 'enabled',
+    daily_budget_cents: toCents(r.campaignBudgetAmount),
+    impressions:        Number(r.impressions ?? 0),
+    clicks:             Number(r.clicks ?? 0),
+    spend_cents:        toCents(r.cost),
+    sales_cents:        toCents(r.sales14d),
+    orders:             Number(r.purchases14d ?? 0),
+    units:              Number(r.unitsSoldClicks14d ?? 0),
   }))
   const { error } = await db.from('sb_campaigns').upsert(records, { onConflict: 'profile_id,campaign_id,date' })
   if (error) throw new Error(`sb_campaigns upsert: ${error.message}`)
@@ -183,8 +185,8 @@ async function upsertSbKeywords(db: SupabaseClient, profileId: number, rows: any
       date:         r.date,
       keyword_text: r.keyword ?? '',
       match_type:   (r.matchType ?? 'broad').toLowerCase(),
-      state:        r.state ?? 'enabled',
-      bid_cents:    toCents(r.bid),
+      state:        r.adKeywordStatus ?? 'enabled',
+      bid_cents:    toCents(r.keywordBid),
       impressions:  Number(r.impressions ?? 0),
       clicks:       Number(r.clicks ?? 0),
       spend_cents:  toCents(r.cost),
@@ -204,7 +206,7 @@ async function upsertSbSearchTerms(db: SupabaseClient, profileId: number, rows: 
     campaign_id:          Number(r.campaignId),
     ad_group_id:          r.adGroupId ? Number(r.adGroupId) : null,
     date:                 r.date,
-    customer_search_term: r.query ?? '',
+    customer_search_term: r.targeting ?? '',
     impressions:          Number(r.impressions ?? 0),
     clicks:               Number(r.clicks ?? 0),
     spend_cents:          toCents(r.cost),

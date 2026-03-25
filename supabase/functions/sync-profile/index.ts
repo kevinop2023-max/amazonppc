@@ -253,7 +253,7 @@ async function runSync(profileId: number, logId: string | null, db: any, startDa
     console.log('[sync] Creating all reports in parallel...')
     const [spCampId, spAdgId, spKwId, spStId, sbCampId, sbKwId, sbStId] = await Promise.all([
       createReport(accessToken, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMPAIGN_COLS,   startDate, endDate),
-      createReport(accessToken, pid, 'SP AdGroups',  'SPONSORED_PRODUCTS', 'spAdGroups',   ['adGroup'],    SP_ADGROUP_COLS,    startDate, endDate),
+      createReport(accessToken, pid, 'SP AdGroups',  'SPONSORED_PRODUCTS', 'spAdGroups',   ['adGroup'],    SP_ADGROUP_COLS,    startDate, endDate).catch(() => null),
       createReport(accessToken, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KEYWORD_COLS,    startDate, endDate),
       createReport(accessToken, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_SEARCHTERM_COLS, startDate, endDate),
       createReport(accessToken, pid, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',  ['campaign'],   SB_CAMPAIGN_COLS,   startDate, endDate).catch(() => null),
@@ -265,7 +265,7 @@ async function runSync(profileId: number, logId: string | null, db: any, startDa
     console.log('[sync] Polling all reports in parallel...')
     const [spCampUrl, spAdgUrl, spKwUrl, spStUrl, sbCampUrl, sbKwUrl, sbStUrl] = await Promise.all([
       waitReport(accessToken, pid, 'SP Campaigns', spCampId),
-      waitReport(accessToken, pid, 'SP AdGroups',  spAdgId),
+      spAdgId ? waitReport(accessToken, pid, 'SP AdGroups',  spAdgId).catch(() => null) : Promise.resolve(null),
       waitReport(accessToken, pid, 'SP Keywords',  spKwId),
       waitReport(accessToken, pid, 'SP Terms',     spStId),
       sbCampId ? waitReport(accessToken, pid, 'SB Campaigns', sbCampId).catch(() => null) : Promise.resolve(null),
@@ -277,7 +277,7 @@ async function runSync(profileId: number, logId: string | null, db: any, startDa
     console.log('[sync] Downloading all reports in parallel...')
     const [spCampRows, spAdgRows, spKwRows, spStRows, sbCampRows, sbKwRows, sbStRows] = await Promise.all([
       downloadAndParse(spCampUrl),
-      downloadAndParse(spAdgUrl),
+      spAdgUrl ? downloadAndParse(spAdgUrl).catch(() => []) : Promise.resolve([]),
       downloadAndParse(spKwUrl),
       downloadAndParse(spStUrl),
       sbCampUrl ? downloadAndParse(sbCampUrl).catch(() => []) : Promise.resolve([]),

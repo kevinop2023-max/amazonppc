@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
 
 interface SyncLog {
   status:        string
@@ -17,15 +18,14 @@ export default function SyncStatus({ sync, profileId }: { sync: SyncLog | null; 
     setSyncing(true)
     setMsg(null)
     try {
-      const res  = await fetch('/api/v1/sync', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ profile_id: profileId }),
+      const supabase = createClient()
+      const { data, error } = await supabase.functions.invoke('sync-profile', {
+        body: { profile_id: profileId, triggered_by: 'manual' },
       })
-      const data = await res.json()
-      setMsg(res.ok ? '✓ Sync started' : data.error)
-    } catch {
-      setMsg('Failed to trigger sync')
+      if (error) throw error
+      setMsg(data?.success ? `✓ Synced ${data.records_upserted ?? 0} records` : (data?.error ?? 'Sync failed'))
+    } catch (e: any) {
+      setMsg(e?.message ?? 'Failed to trigger sync')
     }
     setSyncing(false)
   }

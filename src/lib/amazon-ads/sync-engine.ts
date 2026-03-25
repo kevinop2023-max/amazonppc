@@ -246,13 +246,13 @@ export async function syncProfile(profileId: number, triggeredBy: 'scheduler' | 
 
     // ── Request all reports in parallel ──────────────────────────────────
     const [spCampRows, spAdgRows, spKwRows, spStRows, sbCampRows, sbKwRows, sbStRows] = await Promise.all([
-      createAndWaitReport(client, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',    ['campaign'],       SP_CAMPAIGN_COLS,   startDate, endDate),
-      createAndWaitReport(client, 'SP AdGroups',  'SPONSORED_PRODUCTS', 'spAdGroup',      ['adGroup'],        SP_ADGROUP_COLS,    startDate, endDate),
-      createAndWaitReport(client, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',    ['targeting'],      SP_KEYWORD_COLS,    startDate, endDate),
-      createAndWaitReport(client, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm',   ['searchTerm'],     SP_SEARCHTERM_COLS, startDate, endDate),
-      createAndWaitReport(client, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',    ['campaign'],       SB_CAMPAIGN_COLS,   startDate, endDate).catch(() => []),
-      createAndWaitReport(client, 'SB Keywords',  'SPONSORED_BRANDS',   'sbTargeting',    ['targeting'],      SB_KEYWORD_COLS,    startDate, endDate).catch(() => []),
-      createAndWaitReport(client, 'SB Terms',     'SPONSORED_BRANDS',   'sbSearchTerm',   ['searchTerm'],     SB_SEARCHTERM_COLS, startDate, endDate).catch(() => []),
+      createAndWaitReport(client, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMPAIGN_COLS,   startDate, endDate),
+      createAndWaitReport(client, 'SP AdGroups',  'SPONSORED_PRODUCTS', 'spAdGroups',   ['adGroup'],    SP_ADGROUP_COLS,    startDate, endDate),
+      createAndWaitReport(client, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KEYWORD_COLS,    startDate, endDate),
+      createAndWaitReport(client, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_SEARCHTERM_COLS, startDate, endDate),
+      createAndWaitReport(client, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',  ['campaign'],   SB_CAMPAIGN_COLS,   startDate, endDate).catch(() => []),
+      createAndWaitReport(client, 'SB Keywords',  'SPONSORED_BRANDS',   'sbTargeting',  ['targeting'],  SB_KEYWORD_COLS,    startDate, endDate).catch(() => []),
+      createAndWaitReport(client, 'SB Terms',     'SPONSORED_BRANDS',   'sbSearchTerm', ['searchTerm'], SB_SEARCHTERM_COLS, startDate, endDate).catch(() => []),
     ])
 
     // ── Upsert all data ───────────────────────────────────────────────────

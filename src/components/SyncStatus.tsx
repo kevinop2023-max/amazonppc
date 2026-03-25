@@ -63,7 +63,7 @@ export default function SyncStatus({ sync, profileId }: { sync: SyncLog | null; 
       </div>
 
       {timeLabel && (
-        <p className="text-xs text-gray-400 mb-2">Last sync: {timeLabel}</p>
+        <p className="text-xs text-gray-400 mb-2" suppressHydrationWarning>Last sync: {timeLabel}</p>
       )}
 
       {sync?.error_message && (

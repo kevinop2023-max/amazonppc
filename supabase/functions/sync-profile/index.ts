@@ -228,7 +228,7 @@ async function runSync(profileId: number, logId: string | null, db: any, startDa
     // Load profile and decrypt tokens
     const { data: profile, error: profileErr } = await db
       .from('amazon_profiles')
-      .select('amazon_profile_id, access_token_enc, refresh_token_enc, token_expires_at')
+      .select('profile_id, access_token_enc, refresh_token_enc, token_expires_at')
       .eq('profile_id', profileId)
       .single()
 
@@ -247,7 +247,7 @@ async function runSync(profileId: number, logId: string | null, db: any, startDa
       }).eq('profile_id', profileId)
     }
 
-    const pid = String(profile.amazon_profile_id)
+    const pid = String(profile.profile_id)
 
     // ── Step 1: Create all 7 reports in parallel ──────────────────────────────
     console.log('[sync] Creating all reports in parallel...')

@@ -44,7 +44,7 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
 CREATE TABLE IF NOT EXISTS public.amazon_profiles (
   profile_id          BIGINT       PRIMARY KEY,          -- Amazon Advertising profile ID
   user_id             UUID         NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-  marketplace         VARCHAR(10)  NOT NULL,             -- e.g. ATVPDKIKX0DER (US)
+  marketplace         VARCHAR(50)  NOT NULL,             -- e.g. ATVPDKIKX0DER (US)
   account_name        VARCHAR(255),
   timezone            VARCHAR(50)  NOT NULL DEFAULT 'America/Los_Angeles',
   access_token_enc    TEXT         NOT NULL DEFAULT '',  -- AES-256 encrypted access token

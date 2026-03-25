@@ -55,12 +55,28 @@ async function createAndWaitReport(
   endDate: string,
 ): Promise<any[]> {
   console.log(`[sync] Creating report: ${name} (reportTypeId=${reportTypeId}, groupBy=${groupBy})`)
-  const { reportId } = await client.createReport({
-    name,
-    startDate,
-    endDate,
-    configuration: { adProduct, groupBy, columns, reportTypeId, timeUnit: 'DAILY', format: 'GZIP_JSON' },
-  }).catch(err => { throw new Error(`[${name}] ${err.message}`) })
+
+  let reportId: string
+  try {
+    const result = await client.createReport({
+      name,
+      startDate,
+      endDate,
+      configuration: { adProduct, groupBy, columns, reportTypeId, timeUnit: 'DAILY', format: 'GZIP_JSON' },
+    })
+    reportId = result.reportId
+    console.log(`[sync] Report created: ${name} → ${reportId}`)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    // 425 = duplicate request — Amazon returns the existing report ID in the detail
+    const dupMatch = msg.match(/duplicate of\s*[:\s]+([a-f0-9-]{36})/i)
+    if (dupMatch) {
+      reportId = dupMatch[1]
+      console.log(`[sync] Reusing duplicate report: ${name} → ${reportId}`)
+    } else {
+      throw new Error(`[${name}] ${msg}`)
+    }
+  }
 
   const downloadUrl = await client.waitForReport(reportId)
   return downloadAndParse(downloadUrl)

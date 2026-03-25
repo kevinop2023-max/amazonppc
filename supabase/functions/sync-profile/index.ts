@@ -127,7 +127,7 @@ Deno.serve(async (req) => {
     const SP_KW    = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SP_ST    = ['date','campaignId','adGroupId','keywordId','matchType','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SB_CAMP  = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-    const SB_KW    = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+    const SB_KW    = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
     const SB_ST    = ['date','campaignId','adGroupId','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
 
     // Create all reports in parallel

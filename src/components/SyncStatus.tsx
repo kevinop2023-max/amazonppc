@@ -86,11 +86,10 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
 
   async function stopSync() {
     try {
-      await supabase
-        .from('sync_logs')
-        .update({ status: 'cancelled', completed_at: new Date().toISOString() })
-        .eq('profile_id', profileId)
-        .eq('status', 'reports_pending')
+      const { error } = await supabase.functions.invoke('cancel-sync', {
+        body: { profile_id: profileId },
+      })
+      if (error) throw error
       setSyncing(false)
       setSync(prev => prev ? { ...prev, status: 'cancelled', completed_at: new Date().toISOString() } : prev)
       setMsg('Sync cancelled')

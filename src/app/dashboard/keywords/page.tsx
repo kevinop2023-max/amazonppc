@@ -20,7 +20,11 @@ export default async function KeywordsPage({
   searchParams: { profile_id?: string; days?: string; filter?: string }
 }) {
   const supabase   = await createClient()
-  const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id, marketplace').order('created_at').limit(10)
+  const { data: profiles } = await supabase
+    .from('amazon_profiles')
+    .select('profile_id, account_name, marketplace')
+    .order('created_at')
+    .limit(10)
   const usProfile  = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
   const profileId  = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
   const days       = Number(searchParams.days ?? 30)
@@ -29,12 +33,6 @@ export default async function KeywordsPage({
   const startDate = new Date()
   startDate.setDate(startDate.getDate() - days)
   const startStr = startDate.toISOString().split('T')[0]
-
-  const { data: profiles } = await supabase
-    .from('amazon_profiles')
-    .select('profile_id, account_name')
-    .order('created_at')
-    .limit(10)
 
   const activeProfileId = profileId ?? (profiles as any)?.[0]?.profile_id ?? null
 

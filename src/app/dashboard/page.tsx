@@ -73,21 +73,12 @@ export default async function DashboardPage({
   }
 
   // ── Fetch data ──────────────────────────────────────────────────────────
-  const [spRes, sbRes, syncRes, alertsRes] = await Promise.all([
-    supabase
-      .from('sp_campaigns')
-      .select('spend_cents, sales_cents, orders, impressions, clicks')
-      .eq('profile_id', profileId)
-      .gte('date', startStr)
-      .lte('date', endStr)
-      .range(0, 49999),
-    supabase
-      .from('sb_campaigns')
-      .select('spend_cents, sales_cents, orders, impressions, clicks')
-      .eq('profile_id', profileId)
-      .gte('date', startStr)
-      .lte('date', endStr)
-      .range(0, 49999),
+  const [metricsRes, syncRes, alertsRes] = await Promise.all([
+    supabase.rpc('get_overview_metrics', {
+      p_profile_id: profileId,
+      p_start:      startStr,
+      p_end:        endStr,
+    }),
     supabase
       .from('sync_logs')
       .select('id, status, started_at, completed_at, error_message, records_upserted')
@@ -118,11 +109,14 @@ export default async function DashboardPage({
     ? { ...latestLog, records_upserted: sessionRecords || latestLog.records_upserted }
     : null
 
-  const rows   = [...(spRes.data ?? []), ...(sbRes.data ?? [])]
-  const totals = rows.reduce(
-    (a, r) => ({ spend: a.spend + r.spend_cents, sales: a.sales + r.sales_cents, orders: a.orders + r.orders, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks }),
-    { spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 }
-  )
+  const m = metricsRes.data?.[0]
+  const totals = {
+    spend:       Number(m?.spend_cents  ?? 0),
+    sales:       Number(m?.sales_cents  ?? 0),
+    orders:      Number(m?.orders       ?? 0),
+    impressions: Number(m?.impressions  ?? 0),
+    clicks:      Number(m?.clicks       ?? 0),
+  }
 
   const acos  = totals.sales > 0  ? (totals.spend / totals.sales * 100).toFixed(1) + '%' : '—'
   const roas  = totals.spend > 0  ? (totals.sales / totals.spend).toFixed(2) + 'x'       : '—'

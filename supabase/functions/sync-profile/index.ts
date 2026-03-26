@@ -118,13 +118,16 @@ Deno.serve(async (req) => {
     const SP_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-    const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-    const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+    // NOTE: SB does NOT support purchases14d/sales14d/unitsSoldClicks14d — SP-only columns
+    const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
+    const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
 
     const logIds: number[] = []
 
-    for (const { startDate, endDate } of batches) {
+    for (let i = 0; i < batches.length; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 3000)) // avoid 429 throttle between batches
+      const { startDate, endDate } = batches[i]
       console.log(`[sync] Creating reports for ${startDate} → ${endDate}...`)
       const [spCamp, spKw, spSt, sbCamp, sbKw, sbSt] = await Promise.all([
         createReport(token, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMP, startDate, endDate),

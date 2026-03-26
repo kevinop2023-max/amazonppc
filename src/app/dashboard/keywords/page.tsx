@@ -43,7 +43,7 @@ export default async function KeywordsPage({
         .eq('profile_id', activeProfileId)
         .gte('date', startStr)
         .order('spend_cents', { ascending: false })
-        .limit(500)
+        .range(0, 49999)
     : { data: [] }
 
   // Aggregate by keyword_id

@@ -25,6 +25,7 @@ export default async function SearchTermsPage({
     .select('customer_search_term, impressions, clicks, spend_cents, sales_cents, orders')
     .eq('profile_id', profileId)
     .gte('date', startStr)
+    .range(0, 49999)
 
   const map = new Map<string, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>()
   for (const r of rows ?? []) {

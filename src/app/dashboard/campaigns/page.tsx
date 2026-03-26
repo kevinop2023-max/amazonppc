@@ -50,6 +50,7 @@ export default async function CampaignsPage({
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId!)
       .gte('date', startStr)
+      .range(0, 49999)
     if (state) q = q.eq('state', state)
     const { data } = await q
 

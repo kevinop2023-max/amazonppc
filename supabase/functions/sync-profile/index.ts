@@ -76,7 +76,7 @@ async function createReport(token: string, pid: string, name: string, adProduct:
       if (dup) { console.log(`[sync] Reuse ${name} → ${dup[1]}`); return dup[1] }
       console.error(`[sync] Skip ${name}: ${res.status} ${text.slice(0, 200)}`); return null
     }
-    const d = JSON.parse(text)
+    const d = text.trim().startsWith('[') ? JSON.parse(text)[0] : JSON.parse(text.split('\n')[0])
     console.log(`[sync] Created ${name} → ${d.reportId}`); return d.reportId
   } catch (e) { console.error(`[sync] Skip ${name}: ${e}`); return null }
 }
@@ -91,7 +91,12 @@ Deno.serve(async (req) => {
     if (!profile_id) return new Response(JSON.stringify({ error: 'profile_id required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-    const endDate = dateStr(1), startDate = dateStr(4)
+
+    // Amazon max per request = 31 days. Split 60d into two 30d batches. v2
+    const batches = [
+      { startDate: dateStr(60), endDate: dateStr(31) },
+      { startDate: dateStr(30), endDate: dateStr(1)  },
+    ]
 
     // Load profile + refresh token if needed
     const { data: profile, error: pErr } = await db.from('amazon_profiles')
@@ -113,35 +118,37 @@ Deno.serve(async (req) => {
     const SP_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-    const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
-    const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
+    const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+    const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
 
-    // Create all reports in parallel (~5s)
-    console.log('[sync] Creating all reports...')
-    const [spCamp, spKw, spSt, sbCamp, sbKw, sbSt] = await Promise.all([
-      createReport(token, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMP, startDate, endDate),
-      createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate),
-      createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate),
-      createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate),
-      createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS',   'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate),
-      createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS',   'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate),
-    ])
+    const logIds: number[] = []
 
-    // Save report IDs + metadata to sync_log
-    const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, startDate, endDate }
-    const { data: log } = await db.from('sync_logs').insert({
-      profile_id, triggered_by,
-      status: 'reports_pending',
-      started_at: new Date().toISOString(),
-      date_range_start: startDate,
-      date_range_end: endDate,
-      report_ids: reportIds,
-    }).select('id').single()
+    for (const { startDate, endDate } of batches) {
+      console.log(`[sync] Creating reports for ${startDate} → ${endDate}...`)
+      const [spCamp, spKw, spSt, sbCamp, sbKw, sbSt] = await Promise.all([
+        createReport(token, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMP, startDate, endDate),
+        createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate),
+        createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate),
+        createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate),
+        createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS',   'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate),
+        createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS',   'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate),
+      ])
+      const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, startDate, endDate }
+      const { data: log } = await db.from('sync_logs').insert({
+        profile_id, triggered_by,
+        status: 'reports_pending',
+        started_at: new Date().toISOString(),
+        date_range_start: startDate,
+        date_range_end: endDate,
+        report_ids: reportIds,
+      }).select('id').single()
+      if (log?.id) logIds.push(log.id)
+    }
 
-    console.log(`[sync] All reports submitted. Log ID: ${log?.id}. pg_cron will poll every minute.`)
+    console.log(`[sync] All reports submitted. Log IDs: ${logIds.join(', ')}`)
 
-    return new Response(JSON.stringify({ success: true, log_id: log?.id, message: 'Reports submitted. Data will be ready in 5–10 minutes.' }), {
+    return new Response(JSON.stringify({ success: true, log_ids: logIds, message: 'Reports submitted. Data will be ready in 10–15 minutes.' }), {
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })
 

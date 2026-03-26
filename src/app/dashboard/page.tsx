@@ -79,13 +79,15 @@ export default async function DashboardPage({
       .select('spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId)
       .gte('date', startStr)
-      .lte('date', endStr),
+      .lte('date', endStr)
+      .range(0, 49999),
     supabase
       .from('sb_campaigns')
       .select('spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId)
       .gte('date', startStr)
-      .lte('date', endStr),
+      .lte('date', endStr)
+      .range(0, 49999),
     supabase
       .from('sync_logs')
       .select('id, status, started_at, completed_at, error_message, records_upserted')

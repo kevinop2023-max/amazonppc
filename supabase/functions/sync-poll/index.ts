@@ -6,9 +6,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const SUPABASE_URL              = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const AMAZON_LWA_CLIENT_ID      = Deno.env.get('AMAZON_LWA_CLIENT_ID')!
+const AMAZON_LWA_CLIENT_SECRET  = Deno.env.get('AMAZON_LWA_CLIENT_SECRET')!
 const TOKEN_ENCRYPTION_KEY      = Deno.env.get('TOKEN_ENCRYPTION_KEY')!
 
 const AMAZON_ADS_BASE = 'https://advertising-api.amazon.com'
+const LWA_TOKEN_URL   = 'https://api.amazon.com/auth/o2/token'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -23,6 +25,14 @@ function hexToBytes(hex: string): Uint8Array {
   return arr
 }
 
+async function encryptToken(plain: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const key = await crypto.subtle.importKey('raw', hexToBytes(TOKEN_ENCRYPTION_KEY), { name: 'AES-GCM' }, false, ['encrypt'])
+  const enc = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, tagLength: 128 }, key, new TextEncoder().encode(plain)))
+  const h = (b: Uint8Array) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('')
+  return h(iv) + h(enc.slice(-16)) + h(enc.slice(0, -16))
+}
+
 async function decryptToken(encrypted: string): Promise<string> {
   const iv = hexToBytes(encrypted.slice(0, 24))
   const authTag = hexToBytes(encrypted.slice(24, 56))
@@ -31,6 +41,17 @@ async function decryptToken(encrypted: string): Promise<string> {
   combined.set(cipher); combined.set(authTag, cipher.length)
   const key = await crypto.subtle.importKey('raw', hexToBytes(TOKEN_ENCRYPTION_KEY), { name: 'AES-GCM' }, false, ['decrypt'])
   return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, tagLength: 128 }, key, combined))
+}
+
+async function refreshAccessToken(rt: string) {
+  const res = await fetch(LWA_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, client_id: AMAZON_LWA_CLIENT_ID, client_secret: AMAZON_LWA_CLIENT_SECRET }),
+  })
+  if (!res.ok) throw new Error(`Token refresh: ${res.status} ${await res.text()}`)
+  const d = await res.json()
+  return { accessToken: d.access_token, expiresAt: new Date(Date.now() + (d.expires_in - 60) * 1000) }
 }
 
 // ── Amazon API helpers ────────────────────────────────────────────────────────
@@ -50,18 +71,33 @@ async function getReportStatus(token: string, profileId: string, reportId: strin
   // Note: when COMPLETED, Amazon includes a `url` field directly in this response
 }
 
+function parseJsonOrNdjson(text: string): any[] {
+  const t = text.trim()
+  if (t.startsWith('[')) return JSON.parse(t)
+  if (!t) return []
+  return t.split('\n').filter(l => l.trim()).map(l => JSON.parse(l))
+}
+
 async function downloadAndParse(url: string): Promise<any[]> {
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`Download failed: ${res.status}`)
-  const ds = new DecompressionStream('gzip')
-  const writer = ds.writable.getWriter()
-  const reader = ds.readable.getReader()
-  writer.write(new Uint8Array(await res.arrayBuffer())); writer.close()
-  const chunks: Uint8Array[] = []
-  while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value) }
-  const out = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0))
-  let off = 0; for (const c of chunks) { out.set(c, off); off += c.length }
-  return JSON.parse(new TextDecoder().decode(out))
+  if (!res.ok) throw new Error(`S3 download failed: ${res.status}`)
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  console.log(`[poll] Got ${bytes.length} bytes, magic=${bytes[0]?.toString(16)},${bytes[1]?.toString(16)}`)
+
+  // Check gzip magic bytes (1f 8b). If fetch already decompressed it, skip decompression.
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    const ds = new DecompressionStream('gzip')
+    const w = ds.writable.getWriter()
+    const r = ds.readable.getReader()
+    w.write(bytes); w.close()
+    const chunks: Uint8Array[] = []
+    for (;;) { const { done, value } = await r.read(); if (done) break; chunks.push(value) }
+    const out = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0))
+    let off = 0; for (const c of chunks) { out.set(c, off); off += c.length }
+    return parseJsonOrNdjson(new TextDecoder().decode(out))
+  }
+  // Already decompressed by fetch — parse directly
+  return parseJsonOrNdjson(new TextDecoder().decode(bytes))
 }
 
 // ── Upsert helpers ────────────────────────────────────────────────────────────
@@ -87,10 +123,23 @@ async function upsertSpKeywords(db: any, pid: number, rows: any[]) {
 
 async function upsertSpSearchTerms(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
-  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: n(r.adGroupId), date: r.date, customer_search_term: r.targeting ?? '', keyword_id: r.keywordId ? n(r.keywordId) : null, match_type: r.matchType?.toLowerCase() ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
-  const { error } = await db.from('sp_search_terms').upsert(r, { onConflict: 'profile_id,campaign_id,ad_group_id,customer_search_term,date' })
+  // Deduplicate: same search term can appear multiple times (multiple keywords match it)
+  const map = new Map<string, any>()
+  for (const r of rows) {
+    const key = `${n(r.campaignId)}|${n(r.adGroupId)}|${r.date}|${r.targeting ?? ''}`
+    const ex = map.get(key)
+    if (ex) {
+      ex.impressions += n(r.impressions); ex.clicks += n(r.clicks)
+      ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales14d)
+      ex.orders += n(r.purchases14d); ex.units += n(r.unitsSoldClicks14d)
+    } else {
+      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: n(r.adGroupId), date: r.date, customer_search_term: r.targeting ?? '', keyword_id: r.keywordId ? n(r.keywordId) : null, match_type: r.matchType?.toLowerCase() ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
+    }
+  }
+  const deduped = [...map.values()]
+  const { error } = await db.from('sp_search_terms').upsert(deduped, { onConflict: 'profile_id,campaign_id,ad_group_id,customer_search_term,date' })
   if (error) throw new Error(`sp_search_terms: ${error.message}`)
-  return r.length
+  return deduped.length
 }
 
 async function upsertSbCampaigns(db: any, pid: number, rows: any[]) {
@@ -111,10 +160,23 @@ async function upsertSbKeywords(db: any, pid: number, rows: any[]) {
 
 async function upsertSbSearchTerms(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
-  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, customer_search_term: r.targeting ?? '', impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
-  const { error } = await db.from('sb_search_terms').upsert(r, { onConflict: 'profile_id,campaign_id,ad_group_id,customer_search_term,date' })
+  const map = new Map<string, any>()
+  for (const r of rows) {
+    const adGrp = r.adGroupId ? n(r.adGroupId) : null
+    const key = `${n(r.campaignId)}|${adGrp}|${r.date}|${r.targeting ?? ''}`
+    const ex = map.get(key)
+    if (ex) {
+      ex.impressions += n(r.impressions); ex.clicks += n(r.clicks)
+      ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales14d)
+      ex.orders += n(r.purchases14d); ex.units += n(r.unitsSoldClicks14d)
+    } else {
+      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: r.targeting ?? '', impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
+    }
+  }
+  const deduped = [...map.values()]
+  const { error } = await db.from('sb_search_terms').upsert(deduped, { onConflict: 'profile_id,campaign_id,ad_group_id,customer_search_term,date' })
   if (error) throw new Error(`sb_search_terms: ${error.message}`)
-  return r.length
+  return deduped.length
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -151,10 +213,16 @@ Deno.serve(async (req) => {
     const ids = log.report_ids as any
     const pid = log.profile_id
 
-    // Load access token
-    const { data: profile } = await db.from('amazon_profiles').select('profile_id, access_token_enc, token_expires_at').eq('profile_id', pid).single()
+    // Load access token, refresh if expired
+    const { data: profile } = await db.from('amazon_profiles').select('profile_id, access_token_enc, refresh_token_enc, token_expires_at').eq('profile_id', pid).single()
     if (!profile) throw new Error('Profile not found')
-    const token = await decryptToken(profile.access_token_enc)
+    let token = await decryptToken(profile.access_token_enc)
+    if (new Date(profile.token_expires_at) <= new Date()) {
+      console.log('[poll] Refreshing token...')
+      const r = await refreshAccessToken(await decryptToken(profile.refresh_token_enc))
+      token = r.accessToken
+      await db.from('amazon_profiles').update({ access_token_enc: await encryptToken(token), token_expires_at: r.expiresAt.toISOString() }).eq('profile_id', pid)
+    }
     const amazonPid = String(profile.profile_id)
 
     // Check all report statuses in parallel (single round, no loop)
@@ -164,8 +232,7 @@ Deno.serve(async (req) => {
       reportEntries.map(async ([name, reportId]) => {
         try {
           const s = await getReportStatus(token, amazonPid, reportId as string)
-          console.log(`[poll] ${name}: ${s.status}`)
-          // Amazon includes the download URL directly in the status response when COMPLETED
+          console.log(`[poll] ${name}: ${s.status} url=${s.url ?? s.location ?? s.downloadUrl ?? 'NONE'} keys=${Object.keys(s).join(',')}`)
           const url = s.url ?? s.location ?? s.downloadUrl ?? null
           return { name, reportId, status: s.status, url }
         } catch (e) {
@@ -210,6 +277,7 @@ Deno.serve(async (req) => {
             }
           }
           if (!url) throw new Error('No download URL available')
+          console.log(`[poll] Downloading ${name} from ${url.slice(0, 80)}...`)
           dataMap[name] = await downloadAndParse(url)
           console.log(`[poll] Downloaded ${nameMap[name] ?? name}: ${dataMap[name].length} rows`)
         } catch (e) {

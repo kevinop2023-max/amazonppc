@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server'
 import MetricCard from '@/components/MetricCard'
 import SyncStatus from '@/components/SyncStatus'
 import AlertsPanel from '@/components/AlertsPanel'
+import ProfileSelector from '@/components/ProfileSelector'
+import DateRangePicker from '@/components/DateRangePicker'
 import Link from 'next/link'
 
 export const revalidate = 0
@@ -10,10 +12,14 @@ function fmt$(cents: number) {
   return '$' + (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+function dateStr(daysAgo: number) {
+  const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().split('T')[0]
+}
+
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: { profile_id?: string; days?: string; amazon_connected?: string; amazon_error?: string }
+  searchParams: { profile_id?: string; days?: string; start?: string; end?: string; amazon_connected?: string; amazon_error?: string }
 }) {
   const supabase = await createClient()
 
@@ -27,7 +33,12 @@ export default async function DashboardPage({
     ? Number(searchParams.profile_id)
     : profiles?.[0]?.profile_id ?? null
 
-  const days = Number(searchParams.days ?? 30)
+  // Date range: custom start/end overrides days buttons
+  const days     = Number(searchParams.days ?? 30)
+  const startStr = searchParams.start ?? dateStr(days)
+  const endStr   = searchParams.end   ?? dateStr(0)
+
+  const isCustomRange = !!(searchParams.start && searchParams.end)
 
   // ── No profile connected ────────────────────────────────────────────────
   if (!profileId) {
@@ -61,21 +72,19 @@ export default async function DashboardPage({
   }
 
   // ── Fetch data ──────────────────────────────────────────────────────────
-  const startDate = new Date()
-  startDate.setDate(startDate.getDate() - days)
-  const startStr = startDate.toISOString().split('T')[0]
-
   const [spRes, sbRes, syncRes, alertsRes] = await Promise.all([
     supabase
       .from('sp_campaigns')
       .select('spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId)
-      .gte('date', startStr),
+      .gte('date', startStr)
+      .lte('date', endStr),
     supabase
       .from('sb_campaigns')
       .select('spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId)
-      .gte('date', startStr),
+      .gte('date', startStr)
+      .lte('date', endStr),
     supabase
       .from('sync_logs')
       .select('id, status, started_at, completed_at, error_message, records_upserted')
@@ -101,7 +110,6 @@ export default async function DashboardPage({
   const acos  = totals.sales > 0  ? (totals.spend / totals.sales * 100).toFixed(1) + '%' : '—'
   const roas  = totals.spend > 0  ? (totals.sales / totals.spend).toFixed(2) + 'x'       : '—'
   const cpc   = totals.clicks > 0 ? '$' + (totals.spend / totals.clicks / 100).toFixed(2) : '—'
-  const ctr   = totals.impressions > 0 ? (totals.clicks / totals.impressions * 100).toFixed(2) + '%' : '—'
 
   const acosHighlight = totals.sales > 0
     ? totals.spend / totals.sales > 0.5 ? 'red' as const
@@ -109,34 +117,47 @@ export default async function DashboardPage({
     : 'default' as const
     : 'default' as const
 
-  const dayOptions = [7, 14, 30, 90]
+  const dayOptions = [7, 14, 30, 60, 90]
 
   return (
     <div className="space-y-7">
 
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Overview</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            {(profiles ?? []).find((p: any) => p.profile_id === profileId)?.account_name ?? `Profile ${profileId}`}
-            {' · '}Last {days} days
-          </p>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">Overview</h1>
+            <p className="text-sm text-gray-400 mt-0.5">
+              {isCustomRange
+                ? `${startStr} — ${endStr}`
+                : `Last ${days} days`}
+            </p>
+          </div>
+          {profiles && profiles.length > 0 && (
+            <ProfileSelector profiles={profiles} currentProfileId={profileId} />
+          )}
         </div>
-        <div className="flex items-center gap-1.5 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
-          {dayOptions.map(d => (
-            <Link
-              key={d}
-              href={`/dashboard?profile_id=${profileId}&days=${d}`}
-              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                days === d
-                  ? 'bg-orange-500 text-white shadow-sm'
-                  : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
-              }`}
-            >
-              {d}d
-            </Link>
-          ))}
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Quick day buttons */}
+          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
+            {dayOptions.map(d => (
+              <Link
+                key={d}
+                href={`/dashboard?profile_id=${profileId}&days=${d}`}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  !isCustomRange && days === d
+                    ? 'bg-orange-500 text-white shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+                }`}
+              >
+                {d}d
+              </Link>
+            ))}
+          </div>
+
+          {/* Custom date range */}
+          <DateRangePicker start={startStr} end={endStr} />
         </div>
       </div>
 

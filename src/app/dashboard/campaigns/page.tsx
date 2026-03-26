@@ -33,8 +33,9 @@ export default async function CampaignsPage({
 }) {
   const supabase = await createClient()
 
-  const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id').order('created_at').limit(1)
-  const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : profiles?.[0]?.profile_id ?? null
+  const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id, marketplace').order('created_at').limit(10)
+  const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
+  const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
   const days  = Number(searchParams.days ?? 30)
   const type  = searchParams.type
   const state = searchParams.state
@@ -114,7 +115,7 @@ export default async function CampaignsPage({
           </div>
           {/* Days filter */}
           <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
-            {[7, 30, 90].map(d => (
+            {[7, 14, 30, 60].map(d => (
               <Link key={d} href={buildUrl({ days: String(d) })}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
                   days === d ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'

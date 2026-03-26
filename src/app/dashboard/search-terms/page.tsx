@@ -9,8 +9,9 @@ export default async function SearchTermsPage({
   searchParams: { profile_id?: string; days?: string; mode?: string; min_spend?: string }
 }) {
   const supabase  = await createClient()
-  const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id').order('created_at').limit(1)
-  const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : profiles?.[0]?.profile_id ?? null
+  const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id, marketplace').order('created_at').limit(10)
+  const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
+  const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
   const days      = Number(searchParams.days ?? 14)
   const mode      = (searchParams.mode ?? 'all') as 'all' | 'wasted' | 'converters'
   const minSpend  = Number(searchParams.min_spend ?? 5)

@@ -20,7 +20,9 @@ export default async function KeywordsPage({
   searchParams: { profile_id?: string; days?: string; filter?: string }
 }) {
   const supabase   = await createClient()
-  const profileId  = searchParams.profile_id ? Number(searchParams.profile_id) : null
+  const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id, marketplace').order('created_at').limit(10)
+  const usProfile  = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
+  const profileId  = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
   const days       = Number(searchParams.days ?? 30)
   const filter     = searchParams.filter ?? 'all'
 

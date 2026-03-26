@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
@@ -15,21 +15,24 @@ interface Profile {
 }
 
 export default function DashboardNav({ user, profiles }: { user: User; profiles: Profile[] }) {
-  const pathname = usePathname() ?? ''
-  const router   = useRouter()
-  const supabase = useRef(createClient()).current   // stable ref — avoids hydration mismatch
+  const pathname     = usePathname() ?? ''
+  const router       = useRouter()
+  const searchParams = useSearchParams()
+  const profileId    = searchParams.get('profile_id')
+  const supabase     = useRef(createClient()).current
 
   async function signOut() {
     await supabase.auth.signOut()
     router.push('/login')
   }
 
+  const p = profileId ? `?profile_id=${profileId}` : ''
   const links = [
-    { href: '/dashboard',              label: 'Overview',      icon: '▤' },
-    { href: '/dashboard/campaigns',    label: 'Campaigns',     icon: '◈' },
-    { href: '/dashboard/search-terms', label: 'Search Terms',  icon: '⌕' },
-    { href: '/dashboard/keywords',     label: 'Keywords',      icon: '◇' },
-    { href: '/dashboard/alerts',       label: 'Alerts',        icon: '◉' },
+    { href: `/dashboard${p}`,              label: 'Overview',     icon: '▤' },
+    { href: `/dashboard/campaigns${p}`,    label: 'Campaigns',    icon: '◈' },
+    { href: `/dashboard/search-terms${p}`, label: 'Search Terms', icon: '⌕' },
+    { href: `/dashboard/keywords${p}`,     label: 'Keywords',     icon: '◇' },
+    { href: `/dashboard/alerts${p}`,       label: 'Alerts',       icon: '◉' },
   ]
 
   const activeProfile = profiles[0]

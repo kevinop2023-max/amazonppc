@@ -9,8 +9,9 @@ export default async function AlertsPage({
   searchParams: { profile_id?: string; severity?: string }
 }) {
   const supabase  = await createClient()
-  const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id').order('created_at').limit(1)
-  const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : profiles?.[0]?.profile_id ?? null
+  const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id, marketplace').order('created_at').limit(10)
+  const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
+  const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
   const severity  = searchParams.severity
 
   if (!profileId) return <p className="text-sm text-gray-500 p-6">No Amazon account connected.</p>

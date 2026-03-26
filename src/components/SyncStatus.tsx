@@ -65,7 +65,7 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       })
       if (error) throw error
       if (!data?.success) throw new Error(data?.error ?? 'Failed to start sync')
-      setMsg('✓ Sync started — data will update in 10–15 minutes')
+      setMsg('✓ Sync started (2 batches) — data will update in 10–15 minutes')
       // Refresh sync log to get the new id
       const { data: log } = await supabase
         .from('sync_logs')
@@ -82,12 +82,11 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
   }
 
   async function stopSync() {
-    if (!sync?.id) return
     try {
       await supabase
         .from('sync_logs')
         .update({ status: 'cancelled', completed_at: new Date().toISOString() })
-        .eq('id', sync.id)
+        .eq('profile_id', profileId)
         .eq('status', 'reports_pending')
       setSyncing(false)
       setSync(prev => prev ? { ...prev, status: 'cancelled', completed_at: new Date().toISOString() } : prev)

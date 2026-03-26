@@ -59,26 +59,35 @@ async function refreshAccessToken(rt: string) {
 }
 
 async function createReport(token: string, pid: string, name: string, adProduct: string, typeId: string, groupBy: string[], cols: string[], start: string, end: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${AMAZON_ADS_BASE}/reporting/reports`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
-        'Amazon-Advertising-API-Scope': pid,
-        'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
-      },
-      body: JSON.stringify({ name, startDate: start, endDate: end, configuration: { adProduct, groupBy, columns: cols, reportTypeId: typeId, timeUnit: 'DAILY', format: 'GZIP_JSON' } }),
-    })
-    const text = await res.text()
-    if (!res.ok) {
-      const dup = text.match(/duplicate of\s*[:\s]+([a-f0-9-]{36})/i)
-      if (dup) { console.log(`[sync] Reuse ${name} → ${dup[1]}`); return dup[1] }
-      console.error(`[sync] Skip ${name}: ${res.status} ${text.slice(0, 200)}`); return null
-    }
-    const d = text.trim().startsWith('[') ? JSON.parse(text)[0] : JSON.parse(text.split('\n')[0])
-    console.log(`[sync] Created ${name} → ${d.reportId}`); return d.reportId
-  } catch (e) { console.error(`[sync] Skip ${name}: ${e}`); return null }
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const res = await fetch(`${AMAZON_ADS_BASE}/reporting/reports`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
+          'Amazon-Advertising-API-Scope': pid,
+          'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
+        },
+        body: JSON.stringify({ name, startDate: start, endDate: end, configuration: { adProduct, groupBy, columns: cols, reportTypeId: typeId, timeUnit: 'DAILY', format: 'GZIP_JSON' } }),
+      })
+      const text = await res.text()
+      if (res.status === 429) {
+        const wait = attempt * 8000
+        console.log(`[sync] ${name} throttled (attempt ${attempt}), retrying in ${wait / 1000}s...`)
+        await new Promise(r => setTimeout(r, wait))
+        continue
+      }
+      if (!res.ok) {
+        const dup = text.match(/duplicate of\s*[:\s]+([a-f0-9-]{36})/i)
+        if (dup) { console.log(`[sync] Reuse ${name} → ${dup[1]}`); return dup[1] }
+        console.error(`[sync] Skip ${name}: ${res.status} ${text.slice(0, 200)}`); return null
+      }
+      const d = text.trim().startsWith('[') ? JSON.parse(text)[0] : JSON.parse(text.split('\n')[0])
+      console.log(`[sync] Created ${name} → ${d.reportId}`); return d.reportId
+    } catch (e) { console.error(`[sync] Skip ${name}: ${e}`); return null }
+  }
+  console.error(`[sync] Skip ${name}: exhausted retries`); return null
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -128,11 +137,16 @@ Deno.serve(async (req) => {
     for (let i = 0; i < batches.length; i++) {
       if (i > 0) await new Promise(r => setTimeout(r, 3000)) // avoid 429 throttle between batches
       const { startDate, endDate } = batches[i]
-      console.log(`[sync] Creating reports for ${startDate} → ${endDate}...`)
-      const [spCamp, spKw, spSt, sbCamp, sbKw, sbSt] = await Promise.all([
+      console.log(`[sync] Creating SP reports for ${startDate} → ${endDate}...`)
+      const [spCamp, spKw, spSt] = await Promise.all([
         createReport(token, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMP, startDate, endDate),
         createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate),
         createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate),
+      ])
+      // Wait between SP and SB to avoid throttling SB reports
+      await new Promise(r => setTimeout(r, 10000))
+      console.log(`[sync] Creating SB reports for ${startDate} → ${endDate}...`)
+      const [sbCamp, sbKw, sbSt] = await Promise.all([
         createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate),
         createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS',   'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate),
         createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS',   'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate),

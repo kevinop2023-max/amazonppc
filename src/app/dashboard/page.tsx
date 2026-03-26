@@ -29,9 +29,10 @@ export default async function DashboardPage({
     .order('created_at')
     .limit(10)
 
+  const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
   const profileId = searchParams.profile_id
     ? Number(searchParams.profile_id)
-    : profiles?.[0]?.profile_id ?? null
+    : (usProfile ?? profiles?.[0])?.profile_id ?? null
 
   // Date range: custom start/end overrides days buttons
   const days     = Number(searchParams.days ?? 30)

@@ -117,7 +117,7 @@ export default async function DashboardPage({
     : 'default' as const
     : 'default' as const
 
-  const dayOptions = [7, 14, 30, 60, 90]
+  const dayOptions = [7, 14, 30, 60]
 
   return (
     <div className="space-y-7">

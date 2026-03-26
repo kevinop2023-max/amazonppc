@@ -91,8 +91,7 @@ export default async function DashboardPage({
       .select('id, status, started_at, completed_at, error_message, records_upserted')
       .eq('profile_id', profileId)
       .order('started_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(4),
     supabase
       .from('alerts')
       .select('id, alert_type, severity, entity_name, message, triggered_at')
@@ -101,6 +100,16 @@ export default async function DashboardPage({
       .order('triggered_at', { ascending: false })
       .limit(5),
   ])
+
+  // Build a single sync log: use latest log, but sum records from recent batch pair
+  const syncLogs = syncRes.data ?? []
+  const latestLog = syncLogs[0] ?? null
+  const recentRecords = syncLogs
+    .filter(l => l.status === 'success' && l.started_at && new Date(l.started_at) > new Date(Date.now() - 2 * 60 * 60 * 1000))
+    .reduce((s, l) => s + (l.records_upserted ?? 0), 0)
+  const syncForDisplay = latestLog
+    ? { ...latestLog, records_upserted: recentRecords || latestLog.records_upserted }
+    : null
 
   const rows   = [...(spRes.data ?? []), ...(sbRes.data ?? [])]
   const totals = rows.reduce(
@@ -177,7 +186,7 @@ export default async function DashboardPage({
         <div className="lg:col-span-2">
           <AlertsPanel alerts={alertsRes.data ?? []} />
         </div>
-        <SyncStatus sync={syncRes.data ?? null} profileId={profileId} />
+        <SyncStatus sync={syncForDisplay} profileId={profileId} />
       </div>
 
       {/* ── Quick links ── */}

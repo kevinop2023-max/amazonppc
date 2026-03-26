@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 export default function DateRangePicker({
@@ -12,6 +12,10 @@ export default function DateRangePicker({
 }) {
   const [startVal, setStartVal] = useState(start)
   const [endVal,   setEndVal]   = useState(end)
+
+  // Sync state when URL-driven props change (e.g. day button clicked)
+  useEffect(() => { setStartVal(start) }, [start])
+  useEffect(() => { setEndVal(end) },     [end])
   const router = useRouter()
   const searchParams = useSearchParams()
 

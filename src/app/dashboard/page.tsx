@@ -103,14 +103,19 @@ export default async function DashboardPage({
       .limit(5),
   ])
 
-  // Build a single sync log: use latest log, but sum records from recent batch pair
+  // Build a single sync log: sum records from the same sync session (batches within 5 min of latest)
   const syncLogs = syncRes.data ?? []
   const latestLog = syncLogs[0] ?? null
-  const recentRecords = syncLogs
-    .filter(l => l.status === 'success' && l.started_at && new Date(l.started_at) > new Date(Date.now() - 2 * 60 * 60 * 1000))
-    .reduce((s, l) => s + (l.records_upserted ?? 0), 0)
+  const sessionCutoff = latestLog?.started_at
+    ? new Date(new Date(latestLog.started_at).getTime() - 5 * 60 * 1000)
+    : null
+  const sessionRecords = sessionCutoff
+    ? syncLogs
+        .filter(l => l.status === 'success' && l.started_at && new Date(l.started_at) >= sessionCutoff)
+        .reduce((s, l) => s + (l.records_upserted ?? 0), 0)
+    : 0
   const syncForDisplay = latestLog
-    ? { ...latestLog, records_upserted: recentRecords || latestLog.records_upserted }
+    ? { ...latestLog, records_upserted: sessionRecords || latestLog.records_upserted }
     : null
 
   const rows   = [...(spRes.data ?? []), ...(sbRes.data ?? [])]

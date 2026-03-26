@@ -40,24 +40,33 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       return
     }
     async function poll() {
-      const { data } = await supabase
+      const { data: logs } = await supabase
         .from('sync_logs')
         .select('id, status, started_at, completed_at, error_message, records_upserted')
         .eq('profile_id', profileId)
         .order('started_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (data) {
-        setSync(data)
-        if (data.status !== 'reports_pending' && data.status !== 'running') {
-          setSyncing(false)
-          setMsg(data.status === 'success' ? `✓ Sync complete — ${data.records_upserted?.toLocaleString() ?? 0} records` : null)
-        }
+        .limit(4)
+      if (!logs?.length) return
+
+      // Check if any batch is still pending
+      const anyPending = logs.some(l => l.status === 'reports_pending' || l.status === 'running')
+      const latestLog  = logs[0]
+
+      setSync(latestLog)
+
+      if (!anyPending && !syncing) {
+        setSyncing(false)
+        // Sum records from all success logs in the last 2 hours
+        const cutoff = Date.now() - 2 * 60 * 60 * 1000
+        const total  = logs
+          .filter(l => l.status === 'success' && l.started_at && new Date(l.started_at).getTime() > cutoff)
+          .reduce((s, l) => s + (l.records_upserted ?? 0), 0)
+        if (total > 0) setMsg(`✓ Sync complete — ${total.toLocaleString()} records`)
       }
     }
     pollRef.current = setInterval(poll, 10000)
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [isRunning, profileId, supabase])
+  }, [isRunning, profileId, supabase, syncing])
 
   async function triggerSync() {
     setSyncing(true)

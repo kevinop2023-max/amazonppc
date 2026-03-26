@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 interface SyncLog {
@@ -12,39 +12,93 @@ interface SyncLog {
   records_upserted: number | null
 }
 
-export default function SyncStatus({ sync, profileId }: { sync: SyncLog | null; profileId: number }) {
+const statusConfig = {
+  success:         { dot: 'bg-emerald-500',            badge: 'bg-emerald-50 text-emerald-700 border-emerald-100', label: 'Synced'      },
+  running:         { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
+  reports_pending: { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
+  failed:          { dot: 'bg-red-500',                badge: 'bg-red-50 text-red-600 border-red-100',             label: 'Failed'      },
+  partial:         { dot: 'bg-amber-500',              badge: 'bg-amber-50 text-amber-700 border-amber-100',       label: 'Partial'     },
+  cancelled:       { dot: 'bg-gray-400',               badge: 'bg-gray-50 text-gray-500 border-gray-200',          label: 'Cancelled'   },
+}
+
+export default function SyncStatus({ sync: initialSync, profileId }: { sync: SyncLog | null; profileId: number }) {
+  const [sync,    setSync]    = useState<SyncLog | null>(initialSync)
   const [syncing, setSyncing] = useState(false)
   const [msg,     setMsg]     = useState<string | null>(null)
+  const supabase = useRef(createClient()).current
+  const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const isRunning = sync?.status === 'reports_pending' || sync?.status === 'running' || syncing
+
+  // Poll every 10s while sync is in progress
+  useEffect(() => {
+    if (!isRunning) {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+      return
+    }
+    async function poll() {
+      const { data } = await supabase
+        .from('sync_logs')
+        .select('id, status, started_at, completed_at, error_message, records_upserted')
+        .eq('profile_id', profileId)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (data) {
+        setSync(data)
+        if (data.status !== 'reports_pending' && data.status !== 'running') {
+          setSyncing(false)
+          setMsg(data.status === 'success' ? `✓ Sync complete — ${data.records_upserted?.toLocaleString() ?? 0} records` : null)
+        }
+      }
+    }
+    pollRef.current = setInterval(poll, 10000)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [isRunning, profileId, supabase])
 
   async function triggerSync() {
     setSyncing(true)
     setMsg(null)
     try {
-      const supabase = createClient()
       const { data, error } = await supabase.functions.invoke('sync-profile', {
         body: { profile_id: profileId, triggered_by: 'manual' },
       })
       if (error) throw error
       if (!data?.success) throw new Error(data?.error ?? 'Failed to start sync')
-      setMsg('✓ Sync started — data will update in 3–5 minutes')
+      setMsg('✓ Sync started — data will update in 10–15 minutes')
+      // Refresh sync log to get the new id
+      const { data: log } = await supabase
+        .from('sync_logs')
+        .select('id, status, started_at, completed_at, error_message, records_upserted')
+        .eq('profile_id', profileId)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (log) setSync(log)
     } catch (e: any) {
       setMsg(e?.message ?? 'Failed to trigger sync')
-    } finally {
       setSyncing(false)
     }
   }
 
-  const isRunning = sync?.status === 'running' || syncing
-
-  const statusConfig = {
-    success: { dot: 'bg-emerald-500',            badge: 'bg-emerald-50 text-emerald-700 border-emerald-100', label: 'Synced'      },
-    running: { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
-    failed:  { dot: 'bg-red-500',                badge: 'bg-red-50 text-red-600 border-red-100',             label: 'Failed'      },
-    partial: { dot: 'bg-amber-500',              badge: 'bg-amber-50 text-amber-700 border-amber-100',       label: 'Partial'     },
+  async function stopSync() {
+    if (!sync?.id) return
+    try {
+      await supabase
+        .from('sync_logs')
+        .update({ status: 'cancelled', completed_at: new Date().toISOString() })
+        .eq('id', sync.id)
+        .eq('status', 'reports_pending')
+      setSyncing(false)
+      setSync(prev => prev ? { ...prev, status: 'cancelled', completed_at: new Date().toISOString() } : prev)
+      setMsg('Sync cancelled')
+    } catch (e: any) {
+      setMsg(e?.message ?? 'Failed to cancel sync')
+    }
   }
 
-  const cfg      = sync ? (statusConfig[sync.status as keyof typeof statusConfig] ?? statusConfig.partial) : null
-  const lastTime = sync?.completed_at ?? sync?.started_at
+  const cfg       = sync ? (statusConfig[sync.status as keyof typeof statusConfig] ?? statusConfig.partial) : null
+  const lastTime  = sync?.completed_at ?? sync?.started_at
   const timeLabel = lastTime
     ? new Date(lastTime).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     : null
@@ -85,13 +139,24 @@ export default function SyncStatus({ sync, profileId }: { sync: SyncLog | null; 
         </div>
       )}
 
-      <button
-        onClick={triggerSync}
-        disabled={isRunning}
-        className="w-full mt-1 text-xs font-semibold py-2.5 px-4 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-40 transition-all"
-      >
-        {isRunning ? 'Sync in progress…' : '↻  Sync now'}
-      </button>
+      <div className="flex gap-2 mt-1">
+        <button
+          onClick={triggerSync}
+          disabled={isRunning}
+          className="flex-1 text-xs font-semibold py-2.5 px-4 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+        >
+          {isRunning ? 'Syncing…' : '↻  Sync now'}
+        </button>
+
+        {isRunning && (
+          <button
+            onClick={stopSync}
+            className="text-xs font-semibold py-2.5 px-4 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 transition-all"
+          >
+            Stop
+          </button>
+        )}
+      </div>
     </div>
   )
 }

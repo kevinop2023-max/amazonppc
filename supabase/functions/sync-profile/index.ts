@@ -127,10 +127,12 @@ Deno.serve(async (req) => {
     const SP_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-    // NOTE: SB does NOT support purchases14d/sales14d/unitsSoldClicks14d — SP-only columns
+    // SB spend/clicks report — sales columns not supported at campaign level
     const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
     const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
+    // sbPurchasedProduct: separate report that exposes SB sales attribution (orders14d/sales14d)
+    const SB_ATTR = ['date','campaignId','sales14d','orders14d']
 
     const logIds: number[] = []
 
@@ -146,12 +148,13 @@ Deno.serve(async (req) => {
       // Wait between SP and SB to avoid throttling SB reports
       await new Promise(r => setTimeout(r, 10000))
       console.log(`[sync] Creating SB reports for ${startDate} → ${endDate}...`)
-      const [sbCamp, sbKw, sbSt] = await Promise.all([
-        createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS',   'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate),
-        createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS',   'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate),
-        createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS',   'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate),
+      const [sbCamp, sbKw, sbSt, sbAttr] = await Promise.all([
+        createReport(token, pid, 'SB Campaigns',  'SPONSORED_BRANDS', 'sbCampaigns',      ['campaign'],        SB_CAMP, startDate, endDate),
+        createReport(token, pid, 'SB Keywords',   'SPONSORED_BRANDS', 'sbTargeting',      ['targeting'],       SB_KW,   startDate, endDate),
+        createReport(token, pid, 'SB Terms',      'SPONSORED_BRANDS', 'sbSearchTerm',     ['searchTerm'],      SB_ST,   startDate, endDate),
+        createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct',['purchasedAsin'],  SB_ATTR, startDate, endDate),
       ])
-      const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, startDate, endDate }
+      const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, startDate, endDate }
       const { data: log } = await db.from('sync_logs').insert({
         profile_id, triggered_by,
         status: 'reports_pending',

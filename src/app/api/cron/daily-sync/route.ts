@@ -1,11 +1,11 @@
 // Daily cron sync — called by Vercel Cron at 6:00 AM UTC
 // Configured in vercel.json
+// Delegates to the sync-profile Supabase Edge Function (same as manual sync)
 
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
-import { syncProfile } from '@/lib/amazon-ads/sync-engine'
 
-export const maxDuration = 300
+export const maxDuration = 60
 
 export async function GET(request: Request) {
   // Verify this is called by Vercel Cron (not a public request)
@@ -24,10 +24,21 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: 'No profiles to sync' })
   }
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
   const results = []
   for (const { profile_id } of profiles) {
-    const result = await syncProfile(profile_id, 'scheduler')
-    results.push({ profile_id, ...result })
+    const res = await fetch(`${supabaseUrl}/functions/v1/sync-profile`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ profile_id, triggered_by: 'scheduler' }),
+    })
+    const data = await res.json()
+    results.push({ profile_id, ...data })
   }
 
   return NextResponse.json({ synced: results.length, results })

@@ -28,7 +28,7 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
   const supabase = useRef(createClient()).current
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const isStale = sync?.status === 'reports_pending' && sync.started_at
+  const isStale = (sync?.status === 'reports_pending' || sync?.status === 'running') && sync.started_at
     ? (Date.now() - new Date(sync.started_at).getTime()) > 30 * 60 * 1000
     : false
   const isRunning = (sync?.status === 'reports_pending' || sync?.status === 'running') && !isStale || syncing

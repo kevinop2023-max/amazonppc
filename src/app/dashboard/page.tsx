@@ -182,7 +182,7 @@ export default async function DashboardPage({
         <MetricCard label="Avg CPC"      value={cpc} />
       </div>
       <p className="text-xs text-gray-400 -mt-3">
-        Spend includes SP + SB. Sales &amp; orders reflect SP only — Amazon&apos;s SB API does not expose sales attribution in v3 reports.
+        Includes SP + SB. Small variance vs Amazon Ads is normal — attribution data updates over 48–72h.
       </p>
 
       {/* ── Secondary row: Alerts + Sync ── */}

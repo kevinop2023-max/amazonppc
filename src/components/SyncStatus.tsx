@@ -16,6 +16,7 @@ const statusConfig = {
   success:         { dot: 'bg-emerald-500',            badge: 'bg-emerald-50 text-emerald-700 border-emerald-100', label: 'Synced'      },
   running:         { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
   reports_pending: { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
+  downloading:     { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
   failed:          { dot: 'bg-red-500',                badge: 'bg-red-50 text-red-600 border-red-100',             label: 'Failed'      },
   partial:         { dot: 'bg-amber-500',              badge: 'bg-amber-50 text-amber-700 border-amber-100',       label: 'Partial'     },
   cancelled:       { dot: 'bg-gray-400',               badge: 'bg-gray-50 text-gray-500 border-gray-200',          label: 'Cancelled'   },
@@ -28,10 +29,10 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
   const supabase = useRef(createClient()).current
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const isStale = (sync?.status === 'reports_pending' || sync?.status === 'running') && sync.started_at
+  const isStale = (sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && sync.started_at
     ? (Date.now() - new Date(sync.started_at).getTime()) > 30 * 60 * 1000
     : false
-  const isRunning = (sync?.status === 'reports_pending' || sync?.status === 'running') && !isStale || syncing
+  const isRunning = (sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && !isStale || syncing
 
   // Poll every 10s while sync is in progress
   useEffect(() => {
@@ -49,7 +50,7 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       if (!logs?.length) return
 
       // Check if any batch is still pending
-      const anyPending = logs.some(l => l.status === 'reports_pending' || l.status === 'running')
+      const anyPending = logs.some(l => l.status === 'reports_pending' || l.status === 'running' || l.status === 'downloading')
       const latestLog  = logs[0]
 
       setSync(latestLog)

@@ -58,9 +58,11 @@ async function refreshAccessToken(rt: string) {
   return { accessToken: d.access_token, expiresAt: new Date(Date.now() + (d.expires_in - 60) * 1000) }
 }
 
-async function createReport(token: string, pid: string, name: string, adProduct: string, typeId: string, groupBy: string[], cols: string[], start: string, end: string): Promise<string | null> {
+async function createReport(token: string, pid: string, name: string, adProduct: string, typeId: string, groupBy: string[], cols: string[], start: string, end: string, filters?: Array<{field: string, values: string[]}>): Promise<string | null> {
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
+      const config: Record<string, any> = { adProduct, groupBy, columns: cols, reportTypeId: typeId, timeUnit: 'DAILY', format: 'GZIP_JSON' }
+      if (filters?.length) config.filters = filters
       const res = await fetch(`${AMAZON_ADS_BASE}/reporting/reports`, {
         method: 'POST',
         headers: {
@@ -69,7 +71,7 @@ async function createReport(token: string, pid: string, name: string, adProduct:
           'Amazon-Advertising-API-Scope': pid,
           'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
         },
-        body: JSON.stringify({ name, startDate: start, endDate: end, configuration: { adProduct, groupBy, columns: cols, reportTypeId: typeId, timeUnit: 'DAILY', format: 'GZIP_JSON' } }),
+        body: JSON.stringify({ name, startDate: start, endDate: end, configuration: config }),
       })
       const text = await res.text()
       if (res.status === 429) {
@@ -129,9 +131,10 @@ Deno.serve(async (req) => {
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SB spend/clicks report — sales columns not supported at campaign level
     const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
+    // SB_KW: sales columns not supported by sbTargeting in v3 — media metrics only
     const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
-    // sbPurchasedProduct: separate report that exposes SB sales attribution (orders14d/sales14d)
+    // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
     const SB_ATTR = ['date','campaignId','sales14d','orders14d']
 
     const logIds: number[] = []
@@ -152,7 +155,7 @@ Deno.serve(async (req) => {
         createReport(token, pid, 'SB Campaigns',  'SPONSORED_BRANDS', 'sbCampaigns',      ['campaign'],        SB_CAMP, startDate, endDate),
         createReport(token, pid, 'SB Keywords',   'SPONSORED_BRANDS', 'sbTargeting',      ['targeting'],       SB_KW,   startDate, endDate),
         createReport(token, pid, 'SB Terms',      'SPONSORED_BRANDS', 'sbSearchTerm',     ['searchTerm'],      SB_ST,   startDate, endDate),
-        createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct',['purchasedAsin'],  SB_ATTR, startDate, endDate),
+        createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate),
       ])
       const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, startDate, endDate }
       const { data: log } = await db.from('sync_logs').insert({

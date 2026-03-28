@@ -35,6 +35,13 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
     : false
   const isRunning = ((sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && !isStale) || syncing || otherBatchPending
 
+  // A pending log older than 30 min is stale (Amazon report never completed / edge fn timed out)
+  function isFreshPending(log: SyncLog) {
+    return (log.status === 'reports_pending' || log.status === 'running' || log.status === 'downloading')
+      && !!log.started_at
+      && Date.now() - new Date(log.started_at).getTime() < 30 * 60 * 1000
+  }
+
   // On mount: check if any recent batch is pending (handles page refresh mid-sync)
   useEffect(() => {
     async function checkInitial() {
@@ -45,9 +52,10 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
         .order('started_at', { ascending: false })
         .limit(4)
       if (!logs?.length) return
-      const pending = logs.some(l => l.status === 'reports_pending' || l.status === 'running' || l.status === 'downloading')
+      const pending = logs.some(isFreshPending)
       setOtherBatchPending(pending)
-      setSync(logs[0])
+      // Only overwrite the server-computed display value when there are active pending batches
+      if (pending) setSync(logs[0])
     }
     checkInitial()
   }, [profileId, supabase])
@@ -67,8 +75,8 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
         .limit(4)
       if (!logs?.length) return
 
-      // Check if any batch is still pending
-      const anyPending = logs.some(l => l.status === 'reports_pending' || l.status === 'running' || l.status === 'downloading')
+      // Check if any batch is still pending (ignore stale logs)
+      const anyPending = logs.some(isFreshPending)
       const latestLog  = logs[0]
 
       setSync(latestLog)
@@ -76,10 +84,11 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
 
       if (!anyPending && !syncing) {
         setSyncing(false)
-        // Sum records from all success logs in the last 2 hours
-        const cutoff = Date.now() - 2 * 60 * 60 * 1000
-        const total  = logs
-          .filter(l => l.status === 'success' && l.started_at && new Date(l.started_at).getTime() > cutoff)
+        // Sum only the current sync session (batches started within 5 min of the latest log)
+        const latestStarted = latestLog?.started_at ? new Date(latestLog.started_at).getTime() : Date.now()
+        const sessionStart  = latestStarted - 5 * 60 * 1000
+        const total = logs
+          .filter(l => l.status === 'success' && l.started_at && new Date(l.started_at).getTime() >= sessionStart)
           .reduce((s, l) => s + (l.records_upserted ?? 0), 0)
         if (total > 0) setMsg(`✓ Sync complete — ${total.toLocaleString()} records`)
       }

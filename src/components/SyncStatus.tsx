@@ -130,7 +130,15 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       if (error) throw error
       setSyncing(false)
       setOtherBatchPending(false)
-      setSync(prev => prev ? { ...prev, status: 'cancelled', completed_at: new Date().toISOString() } : prev)
+      // Fetch actual DB state — batch 2 may already be 'success', only batch 1 was cancelled
+      const { data: log } = await supabase
+        .from('sync_logs')
+        .select('id, status, started_at, completed_at, error_message, records_upserted')
+        .eq('profile_id', profileId)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (log) setSync(log)
       setMsg('Sync cancelled')
     } catch (e: any) {
       setMsg(e?.message ?? 'Failed to cancel sync')

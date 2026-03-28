@@ -310,10 +310,11 @@ Deno.serve(async (req) => {
       })
     }
 
-    // 'downloading' = another call already claimed this log and is actively downloading.
-    // Tell the client to keep polling — it will flip to 'success' shortly.
+    // 'downloading' means a previous call claimed this log but timed out before finishing.
+    // Reset it to 'reports_pending' so it gets reprocessed on the next poll.
     if (log.status === 'downloading') {
-      return new Response(JSON.stringify({ status: 'reports_pending', pending: ['downloading'] }), {
+      await db.from('sync_logs').update({ status: 'reports_pending' }).eq('id', log.id)
+      return new Response(JSON.stringify({ status: 'reports_pending', pending: ['reset'] }), {
         headers: { ...CORS, 'Content-Type': 'application/json' },
       })
     }
@@ -364,20 +365,6 @@ Deno.serve(async (req) => {
       const pending = statuses.filter(s => s.status !== 'COMPLETED').map(s => s.name)
       console.log(`[poll] Still pending: ${pending.join(', ')}`)
       return new Response(JSON.stringify({ status: 'reports_pending', pending }), {
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // All reports COMPLETED — atomically claim the log before downloading.
-    // This prevents a concurrent call from also downloading the same reports.
-    const { data: claimed } = await db.from('sync_logs')
-      .update({ status: 'downloading' })
-      .eq('id', log.id)
-      .eq('status', 'reports_pending')
-      .select('id')
-    if (!claimed?.length) {
-      console.log(`[poll] Log ${log.id} claimed by a concurrent call — skipping download`)
-      return new Response(JSON.stringify({ status: 'reports_pending', pending: ['concurrent'] }), {
         headers: { ...CORS, 'Content-Type': 'application/json' },
       })
     }
@@ -441,11 +428,6 @@ Deno.serve(async (req) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[poll] Error:', msg)
-    // If we claimed the log (set it to 'downloading') but then threw, reset it so pg_cron can retry
-    try {
-      const db2 = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-      await db2.from('sync_logs').update({ status: 'reports_pending' }).eq('status', 'downloading')
-    } catch (_) { /* best-effort reset */ }
     return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } })
   }
 })

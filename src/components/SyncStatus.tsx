@@ -154,8 +154,12 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
         <p className="text-xs text-gray-400 mb-2" suppressHydrationWarning>Last sync: {timeLabel}</p>
       )}
 
-      {sync?.records_upserted != null && sync.status === 'success' && (
+      {sync?.records_upserted != null && sync.status === 'success' && !otherBatchPending && (
         <p className="text-xs text-emerald-600 mb-2">{sync.records_upserted.toLocaleString()} records synced</p>
+      )}
+
+      {isRunning && otherBatchPending && sync?.status === 'success' && (
+        <p className="text-xs text-blue-600 mb-2">1 of 2 batches complete — finishing up…</p>
       )}
 
       {sync?.error_message && sync.status === 'failed' && (

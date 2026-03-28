@@ -23,16 +23,34 @@ const statusConfig = {
 }
 
 export default function SyncStatus({ sync: initialSync, profileId }: { sync: SyncLog | null; profileId: number }) {
-  const [sync,    setSync]    = useState<SyncLog | null>(initialSync)
-  const [syncing, setSyncing] = useState(false)
-  const [msg,     setMsg]     = useState<string | null>(null)
+  const [sync,              setSync]              = useState<SyncLog | null>(initialSync)
+  const [syncing,           setSyncing]           = useState(false)
+  const [msg,               setMsg]               = useState<string | null>(null)
+  const [otherBatchPending, setOtherBatchPending] = useState(false)
   const supabase = useRef(createClient()).current
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const isStale = (sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && sync.started_at
     ? (Date.now() - new Date(sync.started_at).getTime()) > 30 * 60 * 1000
     : false
-  const isRunning = (sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && !isStale || syncing
+  const isRunning = ((sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && !isStale) || syncing || otherBatchPending
+
+  // On mount: check if any recent batch is pending (handles page refresh mid-sync)
+  useEffect(() => {
+    async function checkInitial() {
+      const { data: logs } = await supabase
+        .from('sync_logs')
+        .select('id, status, started_at, completed_at, error_message, records_upserted')
+        .eq('profile_id', profileId)
+        .order('started_at', { ascending: false })
+        .limit(4)
+      if (!logs?.length) return
+      const pending = logs.some(l => l.status === 'reports_pending' || l.status === 'running' || l.status === 'downloading')
+      setOtherBatchPending(pending)
+      setSync(logs[0])
+    }
+    checkInitial()
+  }, [profileId, supabase])
 
   // Poll every 10s while sync is in progress
   useEffect(() => {
@@ -54,6 +72,7 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       const latestLog  = logs[0]
 
       setSync(latestLog)
+      setOtherBatchPending(anyPending)
 
       if (!anyPending && !syncing) {
         setSyncing(false)
@@ -101,6 +120,7 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       })
       if (error) throw error
       setSyncing(false)
+      setOtherBatchPending(false)
       setSync(prev => prev ? { ...prev, status: 'cancelled', completed_at: new Date().toISOString() } : prev)
       setMsg('Sync cancelled')
     } catch (e: any) {

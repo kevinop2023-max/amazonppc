@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "deploy:functions": "supabase@1.207.9 functions deploy sync-profile --project-ref mlbyvkynpqwmvczpkitp && supabase@1.207.9 functions deploy sync-poll --project-ref mlbyvkynpqwmvczpkitp"
+  },
+  "devDependencies": {
+    "supabase": "1.207.9"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",

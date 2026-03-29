@@ -104,9 +104,9 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       const { data, error } = await supabase.functions.invoke('sync-profile', {
         body: { profile_id: profileId, triggered_by: 'manual' },
       })
-      // Non-2xx (e.g. 409 duplicate guard) — try to read the body message
       if (error) {
-        const msg = (error as any)?.context?.json?.error ?? (error as any)?.message ?? 'Failed to start sync'
+        let msg = (error as any)?.message ?? 'Failed to start sync'
+        try { const b = await (error as any)?.context?.json?.(); if (b?.error) msg = b.error } catch {}
         throw new Error(msg)
       }
       if (!data?.success) throw new Error(data?.error ?? 'Failed to start sync')

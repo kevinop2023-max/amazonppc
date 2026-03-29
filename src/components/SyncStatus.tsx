@@ -101,8 +101,9 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
     setSyncing(true)
     setMsg(null)
     try {
-      // Ensure JWT is fresh before invoking — prevents 401 from expired session
-      await supabase.auth.getSession()
+      // Force token refresh before invoking — getSession() reads stale storage, refreshSession() fetches a new JWT
+      const { error: refreshErr } = await supabase.auth.refreshSession()
+      if (refreshErr) { window.location.href = '/login'; return }
 
       const { data, error } = await supabase.functions.invoke('sync-profile', {
         body: { profile_id: profileId, triggered_by: 'manual' },

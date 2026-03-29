@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "deploy:functions": "supabase@1.207.9 functions deploy sync-profile-v2 --project-ref mlbyvkynpqwmvczpkitp && supabase@1.207.9 functions deploy sync-poll-v2 --project-ref mlbyvkynpqwmvczpkitp"
+    "deploy:functions": "supabase@1.207.9 functions deploy sync-profile-v2 --project-ref otkxwlogknxhnwyzkfxq && supabase@1.207.9 functions deploy sync-poll-v2 --project-ref otkxwlogknxhnwyzkfxq"
   },
   "devDependencies": {
     "supabase": "1.207.9"

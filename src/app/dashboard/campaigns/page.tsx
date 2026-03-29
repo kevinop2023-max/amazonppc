@@ -17,10 +17,12 @@ function AcosBadge({ acos }: { acos: number | null }) {
 }
 
 function AdTypePill({ type }: { type: string }) {
+  const cls =
+    type === 'SP' ? 'bg-blue-50 text-blue-600'   :
+    type === 'SB' ? 'bg-purple-50 text-purple-600' :
+                   'bg-teal-50 text-teal-600'
   return (
-    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-      type === 'SP' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'
-    }`}>
+    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${cls}`}>
       {type}
     </span>
   )
@@ -44,7 +46,7 @@ export default async function CampaignsPage({
 
   const startStr = new Date(Date.now() - days * 86400000).toISOString().split('T')[0]
 
-  async function fetchCampaigns(table: 'sp_campaigns' | 'sb_campaigns', adType: string) {
+  async function fetchCampaigns(table: 'sp_campaigns' | 'sb_campaigns' | 'sd_campaigns', adType: string) {
     let q = supabase
       .from(table)
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
@@ -72,6 +74,7 @@ export default async function CampaignsPage({
   const results = await Promise.all([
     ...(!type || type === 'SP' ? [fetchCampaigns('sp_campaigns', 'SP')] : []),
     ...(!type || type === 'SB' ? [fetchCampaigns('sb_campaigns', 'SB')] : []),
+    ...(!type || type === 'SD' ? [fetchCampaigns('sd_campaigns', 'SD')] : []),
   ])
 
   const campaigns = results.flat()
@@ -106,7 +109,7 @@ export default async function CampaignsPage({
         <div className="flex flex-wrap items-center gap-2">
           {/* Type filter */}
           <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
-            {[['', 'All'], ['SP', 'SP'], ['SB', 'SB']].map(([t, label]) => (
+            {[['', 'All'], ['SP', 'SP'], ['SB', 'SB'], ['SD', 'SD']].map(([t, label]) => (
               <Link key={t} href={buildUrl({ type: t || undefined, days: String(days) })}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
                   (type ?? '') === t ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800'

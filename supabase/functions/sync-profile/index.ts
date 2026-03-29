@@ -153,6 +153,8 @@ Deno.serve(async (req) => {
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
     const SB_ATTR = ['date','campaignId','sales14d','orders14d']
+    // SD campaign report — sales supported directly (no separate attribution report needed)
+    const SD_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
 
     const logIds: number[] = []
 
@@ -174,7 +176,13 @@ Deno.serve(async (req) => {
         createReport(token, pid, 'SB Terms',      'SPONSORED_BRANDS', 'sbSearchTerm',     ['searchTerm'],      SB_ST,   startDate, endDate),
         createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate),
       ])
-      const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, startDate, endDate }
+      // Wait between SB and SD to avoid throttling
+      await new Promise(r => setTimeout(r, 5000))
+      console.log(`[sync] Creating SD reports for ${startDate} → ${endDate}...`)
+      const [sdCamp] = await Promise.all([
+        createReport(token, pid, 'SD Campaigns', 'SPONSORED_DISPLAY', 'sdCampaigns', ['campaign'], SD_CAMP, startDate, endDate),
+      ])
+      const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, sdCamp, startDate, endDate }
       const { data: log } = await db.from('sync_logs').insert({
         profile_id, triggered_by,
         status: 'reports_pending',

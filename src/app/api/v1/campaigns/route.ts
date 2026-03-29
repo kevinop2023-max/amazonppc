@@ -1,4 +1,4 @@
-// GET /api/v1/campaigns?profile_id=xxx&days=30&type=SP|SB&state=enabled
+// GET /api/v1/campaigns?profile_id=xxx&days=30&type=SP|SB|SD&state=enabled
 // Returns all campaigns with rolled-up metrics for the requested period
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   startDate.setDate(startDate.getDate() - days)
   const startStr = startDate.toISOString().split('T')[0]
 
-  const fetchCampaigns = async (table: 'sp_campaigns' | 'sb_campaigns', adType: string) => {
+  const fetchCampaigns = async (table: 'sp_campaigns' | 'sb_campaigns' | 'sd_campaigns', adType: string) => {
     let query = supabase
       .from(table)
       .select('campaign_id, campaign_name, state, daily_budget_cents, bidding_strategy, spend_cents, sales_cents, orders, impressions, clicks, units')
@@ -79,6 +79,7 @@ export async function GET(request: NextRequest) {
     const results = await Promise.all([
       ...((!type || type === 'SP') ? [fetchCampaigns('sp_campaigns', 'SP')] : []),
       ...((!type || type === 'SB') ? [fetchCampaigns('sb_campaigns', 'SB')] : []),
+      ...((!type || type === 'SD') ? [fetchCampaigns('sd_campaigns', 'SD')] : []),
     ])
 
     const campaigns = results.flat().sort((a, b) => b.spend - a.spend)

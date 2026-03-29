@@ -179,6 +179,14 @@ async function upsertSbSearchTerms(db: any, pid: number, rows: any[]) {
   return deduped.length
 }
 
+async function upsertSdCampaigns(db: any, pid: number, rows: any[]) {
+  if (!rows.length) return 0
+  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
+  const { error } = await db.from('sd_campaigns').upsert(r, { onConflict: 'profile_id,campaign_id,date' })
+  if (error) throw new Error(`sd_campaigns: ${error.message}`)
+  return r.length
+}
+
 // Aggregate sbPurchasedProduct rows by campaign+date.
 // UPDATEs existing sb_campaigns rows; INSERTs a $0-spend row when no match exists
 // (sbPurchasedProduct uses PURCHASE date — campaign may have had no spend on that date).
@@ -372,7 +380,7 @@ Deno.serve(async (req) => {
     // All done — download and upsert
     console.log(`[poll] All reports ready. Downloading ${completed.length} reports...`)
 
-    const nameMap: Record<string, string> = { spCamp: 'SP Campaigns', spKw: 'SP Keywords', spSt: 'SP Terms', sbCamp: 'SB Campaigns', sbKw: 'SB Keywords', sbSt: 'SB Terms', sbAttr: 'SB Attr Purchases' }
+    const nameMap: Record<string, string> = { spCamp: 'SP Campaigns', spKw: 'SP Keywords', spSt: 'SP Terms', sbCamp: 'SB Campaigns', sbKw: 'SB Keywords', sbSt: 'SB Terms', sbAttr: 'SB Attr Purchases', sdCamp: 'SD Campaigns' }
     const dataMap: Record<string, any[]> = {}
 
     await Promise.all(
@@ -416,6 +424,7 @@ Deno.serve(async (req) => {
     console.log(`[poll] SB Keywords sales check: ${sbKwRows.length} rows, total sales=$${(sbKwSalesTotal/100).toFixed(2)}, orders=${sbKwOrdersTotal}`)
     // sbAttr: aggregate purchased-product rows by campaign+date, UPDATE (or INSERT) sb_campaigns sales/orders
     total += await updateSbCampaignSales(db,  pid, dataMap['sbAttr'] ?? [], dataMap['sbCamp'] ?? [])
+    total += await upsertSdCampaigns(db,      pid, dataMap['sdCamp'] ?? [])
 
     await db.from('amazon_profiles').update({ last_sync_at: new Date().toISOString() }).eq('profile_id', pid)
     await db.from('sync_logs').update({ status: anyFailed ? 'partial' : 'success', completed_at: new Date().toISOString(), records_upserted: total }).eq('id', log.id)

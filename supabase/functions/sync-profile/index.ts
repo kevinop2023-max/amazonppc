@@ -170,12 +170,14 @@ Deno.serve(async (req) => {
       // Wait between SP and SB to avoid throttling SB reports
       await new Promise(r => setTimeout(r, 10000))
       console.log(`[sync] Creating SB reports for ${startDate} → ${endDate}...`)
-      const [sbCamp, sbKw, sbSt, sbAttr] = await Promise.all([
-        createReport(token, pid, 'SB Campaigns',  'SPONSORED_BRANDS', 'sbCampaigns',      ['campaign'],        SB_CAMP, startDate, endDate),
-        createReport(token, pid, 'SB Keywords',   'SPONSORED_BRANDS', 'sbTargeting',      ['targeting'],       SB_KW,   startDate, endDate),
-        createReport(token, pid, 'SB Terms',      'SPONSORED_BRANDS', 'sbSearchTerm',     ['searchTerm'],      SB_ST,   startDate, endDate),
-        createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate),
+      const [sbCamp, sbKw, sbSt] = await Promise.all([
+        createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate),
+        createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate),
+        createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate),
       ])
+      // sbPurchasedProduct separately — parallel creation with other SB reports triggers 429
+      await new Promise(r => setTimeout(r, 5000))
+      const sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate)
       // Wait between SB and SD to avoid throttling
       await new Promise(r => setTimeout(r, 5000))
       console.log(`[sync] Creating SD reports for ${startDate} → ${endDate}...`)

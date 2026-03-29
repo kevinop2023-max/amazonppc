@@ -153,8 +153,8 @@ Deno.serve(async (req) => {
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
     const SB_ATTR = ['date','campaignId','sales14d','orders14d']
-    // SD campaign report — sales supported directly (no separate attribution report needed)
-    const SD_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+    // SD campaign report — purchases14d/sales14d not supported; spend/traffic only
+    const SD_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
 
     const logIds: number[] = []
 

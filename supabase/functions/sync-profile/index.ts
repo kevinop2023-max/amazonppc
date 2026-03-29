@@ -115,7 +115,7 @@ Deno.serve(async (req) => {
       const ageMin = (Date.now() - new Date(pending.started_at).getTime()) / 60000
       if (ageMin < 30) {
         return new Response(JSON.stringify({ success: false, error: 'Sync already in progress' }), {
-          status: 409, headers: { ...CORS, 'Content-Type': 'application/json' },
+          status: 200, headers: { ...CORS, 'Content-Type': 'application/json' },
         })
       }
     }

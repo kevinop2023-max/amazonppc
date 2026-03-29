@@ -372,7 +372,7 @@ Deno.serve(async (req) => {
     // All done — download and upsert
     console.log(`[poll] All reports ready. Downloading ${completed.length} reports...`)
 
-    const nameMap: Record<string, string> = { spCamp: 'SP Campaigns', spKw: 'SP Keywords', spSt: 'SP Terms', sbCamp: 'SB Campaigns', sbKw: 'SB Keywords', sbSt: 'SB Terms', sbAttr: 'SB Attr Purchases' }
+    const nameMap: Record<string, string> = { spCamp: 'SP Campaigns', spKw: 'SP Keywords', spSt: 'SP Terms', sbCamp: 'SB Campaigns', sbKw: 'SB Keywords', sbSt: 'SB Terms', sbAttr: 'SB Attr Purchases', sbvCamp: 'SBV Campaigns', sbvAttr: 'SBV Attr Purchases' }
     const dataMap: Record<string, any[]> = {}
 
     await Promise.all(
@@ -415,7 +415,10 @@ Deno.serve(async (req) => {
     const sbKwOrdersTotal = sbKwRows.reduce((s: number, r: any) => s + n(r.purchases14d), 0)
     console.log(`[poll] SB Keywords sales check: ${sbKwRows.length} rows, total sales=$${(sbKwSalesTotal/100).toFixed(2)}, orders=${sbKwOrdersTotal}`)
     // sbAttr: aggregate purchased-product rows by campaign+date, UPDATE (or INSERT) sb_campaigns sales/orders
-    total += await updateSbCampaignSales(db,  pid, dataMap['sbAttr'] ?? [], dataMap['sbCamp'] ?? [])
+    total += await updateSbCampaignSales(db,  pid, dataMap['sbAttr']  ?? [], dataMap['sbCamp']  ?? [])
+    // SBV: same tables as SB — upsert campaign spend, then merge attribution sales
+    total += await upsertSbCampaigns(db,      pid, dataMap['sbvCamp'] ?? [])
+    total += await updateSbCampaignSales(db,  pid, dataMap['sbvAttr'] ?? [], dataMap['sbvCamp'] ?? [])
 
     await db.from('amazon_profiles').update({ last_sync_at: new Date().toISOString() }).eq('profile_id', pid)
     await db.from('sync_logs').update({ status: anyFailed ? 'partial' : 'success', completed_at: new Date().toISOString(), records_upserted: total }).eq('id', log.id)

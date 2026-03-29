@@ -101,7 +101,7 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
     setSyncing(true)
     setMsg(null)
     try {
-      const { data, error } = await supabase.functions.invoke('sync-profile', {
+      const { data, error } = await supabase.functions.invoke('sync-profile-v2', {
         body: { profile_id: profileId, triggered_by: 'manual' },
       })
       if (error) throw error

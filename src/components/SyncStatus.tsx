@@ -101,11 +101,15 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
     setSyncing(true)
     setMsg(null)
     try {
+      // Ensure JWT is fresh before invoking — prevents 401 from expired session
+      await supabase.auth.getSession()
+
       const { data, error } = await supabase.functions.invoke('sync-profile', {
         body: { profile_id: profileId, triggered_by: 'manual' },
       })
       if (error) {
-        let msg = (error as any)?.message ?? 'Failed to start sync'
+        const status = (error as any)?.context?.status
+        let msg = `Function error (${status ?? 'unknown'})`
         try { const b = await (error as any)?.context?.json?.(); if (b?.error) msg = b.error } catch {}
         throw new Error(msg)
       }

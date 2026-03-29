@@ -101,10 +101,14 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
     setSyncing(true)
     setMsg(null)
     try {
-      const { data, error } = await supabase.functions.invoke('sync-profile-v2', {
+      const { data, error } = await supabase.functions.invoke('sync-profile', {
         body: { profile_id: profileId, triggered_by: 'manual' },
       })
-      if (error) throw error
+      // Non-2xx (e.g. 409 duplicate guard) — try to read the body message
+      if (error) {
+        const msg = (error as any)?.context?.json?.error ?? (error as any)?.message ?? 'Failed to start sync'
+        throw new Error(msg)
+      }
       if (!data?.success) throw new Error(data?.error ?? 'Failed to start sync')
       setMsg('✓ Sync started (2 batches) — data will update in 10–15 minutes')
       // Refresh sync log to get the new id

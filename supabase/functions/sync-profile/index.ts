@@ -135,10 +135,7 @@ Deno.serve(async (req) => {
     const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
-    const SB_ATTR  = ['date','campaignId','sales14d','orders14d']
-    // SBV (Sponsored Brands Video) — same report types, different adProduct
-    const SBV_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
-    const SBV_ATTR = ['date','campaignId','sales14d','orders14d']
+    const SB_ATTR = ['date','campaignId','sales14d','orders14d']
 
     const logIds: number[] = []
 
@@ -160,14 +157,7 @@ Deno.serve(async (req) => {
         createReport(token, pid, 'SB Terms',      'SPONSORED_BRANDS', 'sbSearchTerm',     ['searchTerm'],      SB_ST,   startDate, endDate),
         createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate),
       ])
-      // Wait between SB and SBV to avoid throttling
-      await new Promise(r => setTimeout(r, 5000))
-      console.log(`[sync] Creating SBV reports for ${startDate} → ${endDate}...`)
-      const [sbvCamp, sbvAttr] = await Promise.all([
-        createReport(token, pid, 'SBV Campaigns',  'SPONSORED_BRANDS_VIDEO', 'sbCampaigns',        ['campaign'],        SBV_CAMP, startDate, endDate),
-        createReport(token, pid, 'SBV Attr Purch', 'SPONSORED_BRANDS_VIDEO', 'sbPurchasedProduct', ['purchasedAsin'],   SBV_ATTR, startDate, endDate),
-      ])
-      const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, sbvCamp, sbvAttr, startDate, endDate }
+      const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, startDate, endDate }
       const { data: log } = await db.from('sync_logs').insert({
         profile_id, triggered_by,
         status: 'reports_pending',

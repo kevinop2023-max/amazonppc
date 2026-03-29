@@ -206,6 +206,23 @@ export interface Database {
         }
         Update: Partial<Database['public']['Tables']['sb_campaigns']['Insert']>
       }
+      sb_campaign_attribution: {
+        Row: {
+          id: number
+          profile_id: number
+          campaign_id: number
+          date: string
+          sales_cents: number
+          orders: number
+          source_report: string
+          created_at: string
+        }
+        Insert: Omit<Database['public']['Tables']['sb_campaign_attribution']['Row'], 'id' | 'created_at'> & {
+          id?: number
+          created_at?: string
+        }
+        Update: Partial<Database['public']['Tables']['sb_campaign_attribution']['Insert']>
+      }
       sb_keywords: {
         Row: {
           id: number

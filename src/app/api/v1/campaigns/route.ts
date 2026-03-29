@@ -21,10 +21,86 @@ export async function GET(request: NextRequest) {
   startDate.setDate(startDate.getDate() - days)
   const startStr = startDate.toISOString().split('T')[0]
 
-  const fetchCampaigns = async (table: 'sp_campaigns' | 'sb_campaigns' | 'sd_campaigns', adType: string) => {
+  const fetchSbCampaigns = async () => {
+    let spendQuery = supabase
+      .from('sb_campaigns')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, impressions, clicks, units')
+      .eq('profile_id', profileId)
+      .gte('date', startStr)
+
+    if (state) spendQuery = spendQuery.eq('state', state)
+
+    const [{ data: spendRows, error: spendError }, { data: attrRows, error: attrError }] = await Promise.all([
+      spendQuery,
+      supabase
+        .from('sb_campaign_attribution')
+        .select('campaign_id, sales_cents, orders')
+        .eq('profile_id', profileId)
+        .gte('date', startStr),
+    ])
+
+    if (spendError) throw spendError
+    if (attrError) throw attrError
+
+    const map = new Map<number, {
+      campaign_id: number; campaign_name: string; state: string
+      daily_budget_cents: number | null
+      ad_type: string; spend_cents: number; sales_cents: number
+      orders: number; impressions: number; clicks: number; units: number
+    }>()
+
+    for (const row of spendRows ?? []) {
+      if (!map.has(row.campaign_id)) {
+        map.set(row.campaign_id, {
+          campaign_id: row.campaign_id,
+          campaign_name: row.campaign_name,
+          state: row.state,
+          daily_budget_cents: row.daily_budget_cents,
+          ad_type: 'SB',
+          spend_cents: 0, sales_cents: 0, orders: 0,
+          impressions: 0, clicks: 0, units: 0,
+        })
+      }
+      const acc = map.get(row.campaign_id)!
+      acc.spend_cents += row.spend_cents
+      acc.impressions += row.impressions
+      acc.clicks += row.clicks
+      acc.units += row.units
+    }
+
+    for (const row of attrRows ?? []) {
+      if (!map.has(row.campaign_id)) {
+        map.set(row.campaign_id, {
+          campaign_id: row.campaign_id,
+          campaign_name: `SB Campaign ${row.campaign_id}`,
+          state: 'enabled',
+          daily_budget_cents: null,
+          ad_type: 'SB',
+          spend_cents: 0, sales_cents: 0, orders: 0,
+          impressions: 0, clicks: 0, units: 0,
+        })
+      }
+      const acc = map.get(row.campaign_id)!
+      acc.sales_cents += row.sales_cents
+      acc.orders += row.orders
+    }
+
+    return Array.from(map.values()).map(c => ({
+      ...c,
+      acos: c.sales_cents > 0 ? Math.round((c.spend_cents / c.sales_cents) * 10000) / 100 : null,
+      roas: c.spend_cents > 0 ? Math.round((c.sales_cents / c.spend_cents) * 100) / 100 : null,
+      cpc:  c.clicks > 0      ? Math.round(c.spend_cents / c.clicks) / 100 : null,
+      ctr:  c.impressions > 0 ? Math.round((c.clicks / c.impressions) * 10000) / 100 : null,
+      cvr:  c.clicks > 0      ? Math.round((c.orders / c.clicks) * 10000) / 100 : null,
+      spend:  c.spend_cents / 100,
+      sales:  c.sales_cents / 100,
+    }))
+  }
+
+  const fetchCampaigns = async (table: 'sp_campaigns' | 'sd_campaigns', adType: string) => {
     let query = supabase
       .from(table)
-      .select('campaign_id, campaign_name, state, daily_budget_cents, bidding_strategy, spend_cents, sales_cents, orders, impressions, clicks, units')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks, units')
       .eq('profile_id', profileId)
       .gte('date', startStr)
 
@@ -36,7 +112,7 @@ export async function GET(request: NextRequest) {
     // Group by campaign_id and aggregate
     const map = new Map<number, {
       campaign_id: number; campaign_name: string; state: string
-      daily_budget_cents: number | null; bidding_strategy: string | null
+      daily_budget_cents: number | null
       ad_type: string; spend_cents: number; sales_cents: number
       orders: number; impressions: number; clicks: number; units: number
     }>()
@@ -48,7 +124,6 @@ export async function GET(request: NextRequest) {
           campaign_name:      row.campaign_name,
           state:              row.state,
           daily_budget_cents: row.daily_budget_cents,
-          bidding_strategy:   row.bidding_strategy ?? null,
           ad_type:            adType,
           spend_cents: 0, sales_cents: 0, orders: 0,
           impressions: 0, clicks: 0, units: 0,
@@ -78,7 +153,7 @@ export async function GET(request: NextRequest) {
   try {
     const results = await Promise.all([
       ...((!type || type === 'SP') ? [fetchCampaigns('sp_campaigns', 'SP')] : []),
-      ...((!type || type === 'SB') ? [fetchCampaigns('sb_campaigns', 'SB')] : []),
+      ...((!type || type === 'SB') ? [fetchSbCampaigns()] : []),
       ...((!type || type === 'SD') ? [fetchCampaigns('sd_campaigns', 'SD')] : []),
     ])
 

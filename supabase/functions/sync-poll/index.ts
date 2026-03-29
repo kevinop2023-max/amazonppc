@@ -54,6 +54,12 @@ async function refreshAccessToken(rt: string) {
   return { accessToken: d.access_token, expiresAt: new Date(Date.now() + (d.expires_in - 60) * 1000) }
 }
 
+function json(data: unknown) {
+  return new Response(JSON.stringify(data), {
+    headers: { ...CORS, 'Content-Type': 'application/json' },
+  })
+}
+
 // ── Amazon API helpers ────────────────────────────────────────────────────────
 
 function adsHeaders(token: string, profileId: string) {
@@ -144,7 +150,7 @@ async function upsertSpSearchTerms(db: any, pid: number, rows: any[]) {
 
 async function upsertSbCampaigns(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
-  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
+  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: 0, orders: 0, units: 0 }))
   const { error } = await db.from('sb_campaigns').upsert(r, { onConflict: 'profile_id,campaign_id,date' })
   if (error) throw new Error(`sb_campaigns: ${error.message}`)
   return r.length
@@ -187,110 +193,41 @@ async function upsertSdCampaigns(db: any, pid: number, rows: any[]) {
   return r.length
 }
 
-// Aggregate sbPurchasedProduct rows by campaign+date.
-// UPDATEs existing sb_campaigns rows; INSERTs a $0-spend row when no match exists
-// (sbPurchasedProduct uses PURCHASE date — campaign may have had no spend on that date).
-async function updateSbCampaignSales(db: any, pid: number, rows: any[], sbCampRows: any[]) {
+async function upsertSbCampaignAttribution(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
 
   const nullCampRows = rows.filter(r => !r.campaignId || n(r.campaignId) === 0).length
   const totalSalesFromReport = rows.reduce((s: number, r: any) => s + toCents(r.sales14d), 0)
-  console.log(`[poll] sbAttr: ${rows.length} rows, ${nullCampRows} null-campaignId, total sales=$${(totalSalesFromReport/100).toFixed(2)}`)
+  console.log(`[poll] sbAttr fact-table: ${rows.length} rows, ${nullCampRows} null-campaignId, total sales=$${(totalSalesFromReport / 100).toFixed(2)}`)
 
-  // Build campaign name/state lookup from this batch's sbCamp data
-  const nameMap = new Map<number, { name: string; state: string }>()
-  for (const r of sbCampRows) {
-    const cid = n(r.campaignId)
-    if (cid && !nameMap.has(cid)) nameMap.set(cid, { name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled' })
-  }
-
-  // For any campaigns missing from sbCamp (had no spend this batch), look them up in the DB
-  const unknownIds = [...new Set(rows.map((r: any) => n(r.campaignId)).filter((id: number) => id > 0 && !nameMap.has(id)))]
-  if (unknownIds.length > 0) {
-    const { data: dbRows } = await db.from('sb_campaigns')
-      .select('campaign_id, campaign_name, state')
-      .eq('profile_id', pid)
-      .in('campaign_id', unknownIds)
-      .limit(200)
-    if (dbRows) {
-      for (const r of dbRows) {
-        if (!nameMap.has(r.campaign_id)) nameMap.set(r.campaign_id, { name: r.campaign_name ?? '', state: r.state ?? 'enabled' })
-      }
-    }
-  }
-
-  // Aggregate by campaign+date
-  const map = new Map<string, { campaign_id: number; date: string; sales_cents: number; orders: number }>()
+  const map = new Map<string, { profile_id: number; campaign_id: number; date: string; sales_cents: number; orders: number; source_report: string }>()
   for (const r of rows) {
-    const key = `${n(r.campaignId)}|${r.date}`
+    const campaignId = n(r.campaignId)
+    const key = `${campaignId}|${r.date}`
     const ex = map.get(key)
     if (ex) {
       ex.sales_cents += toCents(r.sales14d)
-      ex.orders      += n(r.orders14d)
+      ex.orders += n(r.orders14d)
     } else {
-      map.set(key, { campaign_id: n(r.campaignId), date: r.date, sales_cents: toCents(r.sales14d), orders: n(r.orders14d) })
+      map.set(key, {
+        profile_id: pid,
+        campaign_id: campaignId,
+        date: r.date,
+        sales_cents: toCents(r.sales14d),
+        orders: n(r.orders14d),
+        source_report: 'sbPurchasedProduct',
+      })
     }
   }
-  console.log(`[poll] sbAttr: ${map.size} unique campaign+date keys`)
 
-  let updated = 0, inserted = 0, errored = 0
-  for (const v of map.values()) {
-    if (v.campaign_id === 0) { errored++; continue }
+  const records = [...map.values()].filter(v => v.campaign_id > 0)
+  if (!records.length) return 0
 
-    // Try UPDATE first (campaign had spend on this date)
-    const { data: updatedRows, error: updateErr } = await db.from('sb_campaigns')
-      .update({ sales_cents: v.sales_cents, orders: v.orders })
-      .eq('profile_id', pid)
-      .eq('campaign_id', v.campaign_id)
-      .eq('date', v.date)
-      .select('id')
+  const { error } = await db.from('sb_campaign_attribution').upsert(records, { onConflict: 'profile_id,campaign_id,date' })
+  if (error) throw new Error(`sb_campaign_attribution: ${error.message}`)
 
-    if (updateErr) {
-      console.error(`[poll] sbAttr update error: ${updateErr.message}`)
-      errored++
-      continue
-    }
-
-    if (updatedRows && updatedRows.length > 0) {
-      updated++
-      continue
-    }
-
-    // No matching row — sbPurchasedProduct date is the purchase date, not click date.
-    // Campaign had no spend on this date; insert a $0-spend row to capture the attribution.
-    const info = nameMap.get(v.campaign_id)
-    console.log(`[poll] sbAttr insert missing row: campaign_id=${v.campaign_id} date=${v.date} sales=$${(v.sales_cents/100).toFixed(2)} name="${info?.name ?? ''}"`)
-    const { error: insertErr } = await db.from('sb_campaigns').insert({
-      profile_id: pid,
-      campaign_id: v.campaign_id,
-      date: v.date,
-      campaign_name: info?.name ?? '',
-      state: info?.state ?? 'enabled',
-      daily_budget_cents: null,
-      impressions: 0,
-      clicks: 0,
-      spend_cents: 0,
-      sales_cents: v.sales_cents,
-      orders: v.orders,
-      units: 0,
-    })
-    if (insertErr) {
-      // Duplicate key = a concurrent call already inserted this row; fall back to UPDATE
-      if (insertErr.message.includes('duplicate') || insertErr.message.includes('unique')) {
-        const { error: retryErr } = await db.from('sb_campaigns')
-          .update({ sales_cents: v.sales_cents, orders: v.orders })
-          .eq('profile_id', pid).eq('campaign_id', v.campaign_id).eq('date', v.date)
-        if (retryErr) { console.error(`[poll] sbAttr retry update error: ${retryErr.message}`); errored++ }
-        else { inserted++; console.log(`[poll] sbAttr retry-update (concurrent): campaign_id=${v.campaign_id} date=${v.date}`) }
-      } else {
-        console.error(`[poll] sbAttr insert error: ${insertErr.message}`)
-        errored++
-      }
-    } else inserted++
-  }
-
-  console.log(`[poll] sbAttr done: ${updated} updated, ${inserted} inserted, ${errored} errors`)
-  return updated + inserted
+  console.log(`[poll] sbAttr fact-table done: upserted=${records.length}, skipped_invalid_campaign=${map.size - records.length}`)
+  return records.length
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -304,37 +241,52 @@ Deno.serve(async (req) => {
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
     // Find the pending sync log
-    let query = db.from('sync_logs').select('*').eq('status', 'reports_pending').order('started_at', { ascending: false }).limit(1)
-    if (log_id) query = db.from('sync_logs').select('*').eq('id', log_id).single() as any
+    let logQuery = db.from('sync_logs')
+      .select('*')
+      .in('status', ['reports_pending', 'downloading'])
+      .order('started_at', { ascending: false })
+      .limit(1)
 
-    const { data: log, error: logErr } = await (log_id
-      ? db.from('sync_logs').select('*').eq('id', log_id).single()
-      : db.from('sync_logs').select('*').in('status', ['reports_pending', 'downloading']).order('started_at', { ascending: false }).limit(1).maybeSingle()
-    )
+    if (log_id) {
+      logQuery = db.from('sync_logs').select('*').eq('id', log_id).limit(1)
+    } else if (profile_id) {
+      logQuery = logQuery.eq('profile_id', profile_id)
+    }
+
+    const { data: logs, error: logErr } = await logQuery
+    const log = logs?.[0] ?? null
 
     if (logErr || !log) {
-      return new Response(JSON.stringify({ status: 'no_pending', message: 'No pending sync found' }), {
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      })
+      return json({ status: 'no_pending', message: 'No pending sync found' })
     }
 
     // 'downloading' means a previous call claimed this log but timed out before finishing.
     // Reset it to 'reports_pending' so it gets reprocessed on the next poll.
     if (log.status === 'downloading') {
       await db.from('sync_logs').update({ status: 'reports_pending' }).eq('id', log.id)
-      return new Response(JSON.stringify({ status: 'reports_pending', pending: ['reset'] }), {
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      })
+      return json({ status: 'reports_pending', pending: ['reset'] })
     }
 
     if (log.status !== 'reports_pending') {
-      return new Response(JSON.stringify({ status: log.status, records_upserted: log.records_upserted }), {
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      })
+      return json({ status: log.status, records_upserted: log.records_upserted })
     }
 
-    const ids = log.report_ids as any
-    const pid = log.profile_id
+    const { data: claimedRows, error: claimErr } = await db.from('sync_logs')
+      .update({ status: 'downloading' })
+      .eq('id', log.id)
+      .eq('status', 'reports_pending')
+      .select('*')
+      .limit(1)
+
+    if (claimErr) throw claimErr
+
+    const claimedLog = claimedRows?.[0]
+    if (!claimedLog) {
+      return json({ status: 'reports_pending', pending: ['claimed_by_other_worker'] })
+    }
+
+    const ids = claimedLog.report_ids as any
+    const pid = claimedLog.profile_id
 
     // Load access token, refresh if expired
     const { data: profile } = await db.from('amazon_profiles').select('profile_id, access_token_enc, refresh_token_enc, token_expires_at').eq('profile_id', pid).single()
@@ -349,6 +301,10 @@ Deno.serve(async (req) => {
     const amazonPid = String(profile.profile_id)
 
     // Check all report statuses in parallel (single round, no loop)
+    // Count reports that were never submitted (null) — these will be reflected in final status
+    const skippedReports = Object.entries(ids).filter(([k]) => !['startDate','endDate'].includes(k) && !ids[k]).length
+    if (skippedReports > 0) console.log(`[poll] ${skippedReports} report(s) were skipped at submission time (throttled)`)
+
     const reportEntries = Object.entries(ids).filter(([k]) => !['startDate','endDate'].includes(k) && ids[k])
 
     const statuses = await Promise.all(
@@ -371,10 +327,9 @@ Deno.serve(async (req) => {
 
     if (!allDone) {
       const pending = statuses.filter(s => s.status !== 'COMPLETED').map(s => s.name)
+      await db.from('sync_logs').update({ status: 'reports_pending' }).eq('id', claimedLog.id)
       console.log(`[poll] Still pending: ${pending.join(', ')}`)
-      return new Response(JSON.stringify({ status: 'reports_pending', pending }), {
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      })
+      return json({ status: 'reports_pending', pending })
     }
 
     // All done — download and upsert
@@ -422,17 +377,16 @@ Deno.serve(async (req) => {
     const sbKwSalesTotal = sbKwRows.reduce((s: number, r: any) => s + toCents(r.sales14d), 0)
     const sbKwOrdersTotal = sbKwRows.reduce((s: number, r: any) => s + n(r.purchases14d), 0)
     console.log(`[poll] SB Keywords sales check: ${sbKwRows.length} rows, total sales=$${(sbKwSalesTotal/100).toFixed(2)}, orders=${sbKwOrdersTotal}`)
-    // sbAttr: aggregate purchased-product rows by campaign+date, UPDATE (or INSERT) sb_campaigns sales/orders
-    total += await updateSbCampaignSales(db,  pid, dataMap['sbAttr'] ?? [], dataMap['sbCamp'] ?? [])
+    // sbAttr: aggregate purchased-product rows into a dedicated attribution fact table
+    total += await upsertSbCampaignAttribution(db, pid, dataMap['sbAttr'] ?? [])
     total += await upsertSdCampaigns(db,      pid, dataMap['sdCamp'] ?? [])
 
     await db.from('amazon_profiles').update({ last_sync_at: new Date().toISOString() }).eq('profile_id', pid)
-    await db.from('sync_logs').update({ status: anyFailed ? 'partial' : 'success', completed_at: new Date().toISOString(), records_upserted: total }).eq('id', log.id)
+    const finalStatus = (anyFailed || skippedReports > 0) ? 'partial' : 'success'
+    await db.from('sync_logs').update({ status: finalStatus, completed_at: new Date().toISOString(), records_upserted: total }).eq('id', claimedLog.id)
 
     console.log(`[poll] Done — ${total} records upserted`)
-    return new Response(JSON.stringify({ status: 'success', records_upserted: total }), {
-      headers: { ...CORS, 'Content-Type': 'application/json' },
-    })
+    return json({ status: finalStatus, records_upserted: total, skipped_reports: skippedReports })
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

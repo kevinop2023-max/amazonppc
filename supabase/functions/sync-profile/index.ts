@@ -47,6 +47,20 @@ function dateStr(daysAgo: number) {
   const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().split('T')[0]
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) return null
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
+
+  const at = Date.parse(value)
+  if (!Number.isNaN(at)) return Math.max(0, at - Date.now())
+  return null
+}
+
 async function refreshAccessToken(rt: string) {
   const res = await fetch(LWA_TOKEN_URL, {
     method: 'POST',
@@ -59,7 +73,10 @@ async function refreshAccessToken(rt: string) {
 }
 
 async function createReport(token: string, pid: string, name: string, adProduct: string, typeId: string, groupBy: string[], cols: string[], start: string, end: string, filters?: Array<{field: string, values: string[]}>): Promise<string | null> {
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  const maxAttempts = adProduct === 'SPONSORED_BRANDS' ? 4 : 3
+  const baseWaitMs = adProduct === 'SPONSORED_BRANDS' ? 3000 : 2000
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const config: Record<string, any> = { adProduct, groupBy, columns: cols, reportTypeId: typeId, timeUnit: 'DAILY', format: 'GZIP_JSON' }
       if (filters?.length) config.filters = filters
@@ -75,9 +92,13 @@ async function createReport(token: string, pid: string, name: string, adProduct:
       })
       const text = await res.text()
       if (res.status === 429) {
-        const wait = attempt * 4000
-        console.log(`[sync] ${name} throttled (attempt ${attempt}), retrying in ${wait / 1000}s...`)
-        await new Promise(r => setTimeout(r, wait))
+        if (attempt === maxAttempts) break
+        const retryAfterMs = parseRetryAfterMs(res.headers.get('retry-after'))
+        const expBackoffMs = baseWaitMs * Math.pow(2, attempt - 1)
+        const jitterMs = Math.floor(Math.random() * 1000)
+        const wait = retryAfterMs ?? expBackoffMs + jitterMs
+        console.log(`[sync] ${name} throttled (attempt ${attempt}/${maxAttempts}), retrying in ${(wait / 1000).toFixed(1)}s... body=${text.slice(0, 200)}`)
+        await sleep(wait)
         continue
       }
       if (!res.ok) {
@@ -159,7 +180,21 @@ Deno.serve(async (req) => {
     const logIds: number[] = []
 
     for (let i = 0; i < batches.length; i++) {
-      if (i > 0) await new Promise(r => setTimeout(r, 3000)) // avoid 429 throttle between batches
+      if (i > 0) {
+        await sleep(2000)
+        // Re-read token from DB — a concurrent invocation may have refreshed it, revoking ours
+        const { data: freshProfile } = await db.from('amazon_profiles')
+          .select('access_token_enc, refresh_token_enc, token_expires_at')
+          .eq('profile_id', profile_id).single()
+        if (freshProfile) {
+          token = await decryptToken(freshProfile.access_token_enc)
+          if (new Date(freshProfile.token_expires_at) <= new Date()) {
+            const r = await refreshAccessToken(await decryptToken(freshProfile.refresh_token_enc))
+            token = r.accessToken
+            await db.from('amazon_profiles').update({ access_token_enc: await encryptToken(token), token_expires_at: r.expiresAt.toISOString() }).eq('profile_id', profile_id)
+          }
+        }
+      }
       const { startDate, endDate } = batches[i]
       console.log(`[sync] Creating SP reports for ${startDate} → ${endDate}...`)
       const [spCamp, spKw, spSt] = await Promise.all([
@@ -167,19 +202,19 @@ Deno.serve(async (req) => {
         createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate),
         createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate),
       ])
-      // Wait between SP and SB to avoid throttling SB reports
-      await new Promise(r => setTimeout(r, 10000))
+      // Wait between SP and SB — SB has a tighter rate limit than SP
+      await sleep(5000)
       console.log(`[sync] Creating SB reports for ${startDate} → ${endDate}...`)
-      const [sbCamp, sbKw, sbSt] = await Promise.all([
-        createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate),
-        createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate),
-        createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate),
-      ])
-      // sbPurchasedProduct separately — parallel creation with other SB reports triggers 429
-      await new Promise(r => setTimeout(r, 5000))
+      // sbPurchasedProduct FIRST — it has the tightest rate limit; submit when the bucket is freshest
       const sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate)
-      // Wait between SB and SD to avoid throttling
-      await new Promise(r => setTimeout(r, 5000))
+      await sleep(sbAttr ? 4000 : 7000)
+      // Sequential with 8s gaps — firing SB requests too close together triggers 429
+      const sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate)
+      await sleep(4000)
+      const sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate)
+      await sleep(4000)
+      const sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate)
+      await sleep(2000)
       console.log(`[sync] Creating SD reports for ${startDate} → ${endDate}...`)
       const [sdCamp] = await Promise.all([
         createReport(token, pid, 'SD Campaigns', 'SPONSORED_DISPLAY', 'sdCampaigns', ['campaign'], SD_CAMP, startDate, endDate),

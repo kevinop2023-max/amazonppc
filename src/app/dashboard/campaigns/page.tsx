@@ -46,7 +46,47 @@ export default async function CampaignsPage({
 
   const startStr = new Date(Date.now() - days * 86400000).toISOString().split('T')[0]
 
-  async function fetchCampaigns(table: 'sp_campaigns' | 'sb_campaigns' | 'sd_campaigns', adType: string) {
+  async function fetchSbCampaigns() {
+    let spendQ = supabase
+      .from('sb_campaigns')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, impressions, clicks')
+      .eq('profile_id', profileId!)
+      .gte('date', startStr)
+      .range(0, 49999)
+    if (state) spendQ = spendQ.eq('state', state)
+
+    const [{ data: spendRows }, { data: attrRows }] = await Promise.all([
+      spendQ,
+      supabase
+        .from('sb_campaign_attribution')
+        .select('campaign_id, sales_cents, orders')
+        .eq('profile_id', profileId!)
+        .gte('date', startStr)
+        .range(0, 49999),
+    ])
+
+    const map = new Map<number, { campaign_id: number; name: string; state: string; ad_type: string; budget: number | null; spend: number; sales: number; orders: number; impressions: number; clicks: number }>()
+    for (const r of spendRows ?? []) {
+      if (!map.has(r.campaign_id)) {
+        map.set(r.campaign_id, { campaign_id: r.campaign_id, name: r.campaign_name, state: r.state, ad_type: 'SB', budget: r.daily_budget_cents, spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 })
+      }
+      const c = map.get(r.campaign_id)!
+      c.spend += r.spend_cents
+      c.impressions += r.impressions
+      c.clicks += r.clicks
+    }
+    for (const r of attrRows ?? []) {
+      if (!map.has(r.campaign_id)) {
+        map.set(r.campaign_id, { campaign_id: r.campaign_id, name: `SB Campaign ${r.campaign_id}`, state: 'enabled', ad_type: 'SB', budget: null, spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 })
+      }
+      const c = map.get(r.campaign_id)!
+      c.sales += r.sales_cents
+      c.orders += r.orders
+    }
+    return Array.from(map.values())
+  }
+
+  async function fetchCampaigns(table: 'sp_campaigns' | 'sd_campaigns', adType: string) {
     let q = supabase
       .from(table)
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
@@ -73,7 +113,7 @@ export default async function CampaignsPage({
 
   const results = await Promise.all([
     ...(!type || type === 'SP' ? [fetchCampaigns('sp_campaigns', 'SP')] : []),
-    ...(!type || type === 'SB' ? [fetchCampaigns('sb_campaigns', 'SB')] : []),
+    ...(!type || type === 'SB' ? [fetchSbCampaigns()] : []),
     ...(!type || type === 'SD' ? [fetchCampaigns('sd_campaigns', 'SD')] : []),
   ])
 

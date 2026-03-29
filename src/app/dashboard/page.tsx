@@ -73,12 +73,25 @@ export default async function DashboardPage({
   }
 
   // ── Fetch data ──────────────────────────────────────────────────────────
-  const [metricsRes, syncRes, alertsRes] = await Promise.all([
-    supabase.rpc('get_overview_metrics', {
-      p_profile_id: profileId,
-      p_start:      startStr,
-      p_end:        endStr,
-    }),
+  const [spMetricsRes, sbSpendRes, sbAttrRes, syncRes, alertsRes] = await Promise.all([
+    supabase
+      .from('sp_campaigns')
+      .select('spend_cents, sales_cents, orders, impressions, clicks')
+      .eq('profile_id', profileId)
+      .gte('date', startStr)
+      .lte('date', endStr),
+    supabase
+      .from('sb_campaigns')
+      .select('spend_cents, impressions, clicks')
+      .eq('profile_id', profileId)
+      .gte('date', startStr)
+      .lte('date', endStr),
+    supabase
+      .from('sb_campaign_attribution')
+      .select('sales_cents, orders')
+      .eq('profile_id', profileId)
+      .gte('date', startStr)
+      .lte('date', endStr),
     supabase
       .from('sync_logs')
       .select('id, status, started_at, completed_at, error_message, records_upserted')
@@ -109,13 +122,31 @@ export default async function DashboardPage({
     ? { ...latestLog, records_upserted: sessionRecords || latestLog.records_upserted }
     : null
 
-  const m = metricsRes.data?.[0]
+  const spTotals = (spMetricsRes.data ?? []).reduce((acc, row) => ({
+    spend: acc.spend + row.spend_cents,
+    sales: acc.sales + row.sales_cents,
+    orders: acc.orders + row.orders,
+    impressions: acc.impressions + row.impressions,
+    clicks: acc.clicks + row.clicks,
+  }), { spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 })
+
+  const sbSpendTotals = (sbSpendRes.data ?? []).reduce((acc, row) => ({
+    spend: acc.spend + row.spend_cents,
+    impressions: acc.impressions + row.impressions,
+    clicks: acc.clicks + row.clicks,
+  }), { spend: 0, impressions: 0, clicks: 0 })
+
+  const sbAttrTotals = (sbAttrRes.data ?? []).reduce((acc, row) => ({
+    sales: acc.sales + row.sales_cents,
+    orders: acc.orders + row.orders,
+  }), { sales: 0, orders: 0 })
+
   const totals = {
-    spend:       Number(m?.spend_cents  ?? 0),
-    sales:       Number(m?.sales_cents  ?? 0),
-    orders:      Number(m?.orders       ?? 0),
-    impressions: Number(m?.impressions  ?? 0),
-    clicks:      Number(m?.clicks       ?? 0),
+    spend: spTotals.spend + sbSpendTotals.spend,
+    sales: spTotals.sales + sbAttrTotals.sales,
+    orders: spTotals.orders + sbAttrTotals.orders,
+    impressions: spTotals.impressions + sbSpendTotals.impressions,
+    clicks: spTotals.clicks + sbSpendTotals.clicks,
   }
 
   const acos  = totals.sales > 0  ? (totals.spend / totals.sales * 100).toFixed(1) + '%' : '—'

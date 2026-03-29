@@ -235,7 +235,24 @@ CREATE TABLE IF NOT EXISTS public.sb_campaigns (
 CREATE INDEX IF NOT EXISTS idx_sb_campaigns_profile_date ON public.sb_campaigns(profile_id, date DESC);
 
 -- ============================================================
--- 10. SB_KEYWORDS
+-- 10. SB_CAMPAIGN_ATTRIBUTION
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.sb_campaign_attribution (
+  id                  BIGSERIAL    PRIMARY KEY,
+  profile_id          BIGINT       NOT NULL REFERENCES public.amazon_profiles(profile_id) ON DELETE CASCADE,
+  campaign_id         BIGINT       NOT NULL,
+  date                DATE         NOT NULL,
+  sales_cents         INTEGER      NOT NULL DEFAULT 0,
+  orders              INTEGER      NOT NULL DEFAULT 0,
+  source_report       VARCHAR(50)  NOT NULL DEFAULT 'sbPurchasedProduct',
+  created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  UNIQUE (profile_id, campaign_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sb_campaign_attr_profile_date ON public.sb_campaign_attribution(profile_id, date DESC);
+
+-- ============================================================
+-- 11. SB_KEYWORDS
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.sb_keywords (
   id                  BIGSERIAL    PRIMARY KEY,
@@ -261,7 +278,7 @@ CREATE TABLE IF NOT EXISTS public.sb_keywords (
 CREATE INDEX IF NOT EXISTS idx_sb_keywords_profile_date ON public.sb_keywords(profile_id, date DESC);
 
 -- ============================================================
--- 11. SB_SEARCH_TERMS
+-- 12. SB_SEARCH_TERMS
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.sb_search_terms (
   id                    BIGSERIAL    PRIMARY KEY,
@@ -285,7 +302,7 @@ CREATE TABLE IF NOT EXISTS public.sb_search_terms (
 CREATE INDEX IF NOT EXISTS idx_sb_search_terms_profile_date ON public.sb_search_terms(profile_id, date DESC);
 
 -- ============================================================
--- 12. SYNC_LOGS
+-- 13. SYNC_LOGS
 -- ============================================================
 CREATE TABLE IF NOT EXISTS public.sync_logs (
   id                  BIGSERIAL    PRIMARY KEY,
@@ -424,6 +441,7 @@ ALTER TABLE public.sp_keywords       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sp_search_terms   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sp_product_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sb_campaigns      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sb_campaign_attribution ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sb_keywords       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sb_search_terms   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sync_logs         ENABLE ROW LEVEL SECURITY;
@@ -461,6 +479,7 @@ CREATE POLICY "sp_keywords_own"        ON public.sp_keywords         FOR ALL USI
 CREATE POLICY "sp_search_terms_own"    ON public.sp_search_terms     FOR ALL USING (profile_id IN (SELECT public.my_profile_ids()));
 CREATE POLICY "sp_product_targets_own" ON public.sp_product_targets  FOR ALL USING (profile_id IN (SELECT public.my_profile_ids()));
 CREATE POLICY "sb_campaigns_own"       ON public.sb_campaigns        FOR ALL USING (profile_id IN (SELECT public.my_profile_ids()));
+CREATE POLICY "sb_campaign_attr_own"   ON public.sb_campaign_attribution FOR ALL USING (profile_id IN (SELECT public.my_profile_ids()));
 CREATE POLICY "sb_keywords_own"        ON public.sb_keywords         FOR ALL USING (profile_id IN (SELECT public.my_profile_ids()));
 CREATE POLICY "sb_search_terms_own"    ON public.sb_search_terms     FOR ALL USING (profile_id IN (SELECT public.my_profile_ids()));
 CREATE POLICY "sync_logs_own"          ON public.sync_logs           FOR ALL USING (profile_id IN (SELECT public.my_profile_ids()));
@@ -476,6 +495,7 @@ CREATE POLICY "service_all_sp_kw"      ON public.sp_keywords       FOR ALL TO se
 CREATE POLICY "service_all_sp_st"      ON public.sp_search_terms   FOR ALL TO service_role USING (true);
 CREATE POLICY "service_all_sp_pt"      ON public.sp_product_targets FOR ALL TO service_role USING (true);
 CREATE POLICY "service_all_sb_camps"   ON public.sb_campaigns      FOR ALL TO service_role USING (true);
+CREATE POLICY "service_all_sb_attr"    ON public.sb_campaign_attribution FOR ALL TO service_role USING (true);
 CREATE POLICY "service_all_sb_kw"      ON public.sb_keywords       FOR ALL TO service_role USING (true);
 CREATE POLICY "service_all_sb_st"      ON public.sb_search_terms   FOR ALL TO service_role USING (true);
 CREATE POLICY "service_all_sync_logs"  ON public.sync_logs         FOR ALL TO service_role USING (true);

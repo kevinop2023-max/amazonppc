@@ -59,7 +59,7 @@ async function refreshAccessToken(rt: string) {
 }
 
 async function createReport(token: string, pid: string, name: string, adProduct: string, typeId: string, groupBy: string[], cols: string[], start: string, end: string, filters?: Array<{field: string, values: string[]}>): Promise<string | null> {
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const config: Record<string, any> = { adProduct, groupBy, columns: cols, reportTypeId: typeId, timeUnit: 'DAILY', format: 'GZIP_JSON' }
       if (filters?.length) config.filters = filters
@@ -75,7 +75,7 @@ async function createReport(token: string, pid: string, name: string, adProduct:
       })
       const text = await res.text()
       if (res.status === 429) {
-        const wait = attempt * 8000
+        const wait = attempt * 4000
         console.log(`[sync] ${name} throttled (attempt ${attempt}), retrying in ${wait / 1000}s...`)
         await new Promise(r => setTimeout(r, wait))
         continue
@@ -102,6 +102,23 @@ Deno.serve(async (req) => {
     if (!profile_id) return new Response(JSON.stringify({ error: 'profile_id required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+    // Guard: reject if a fresh sync is already in progress (prevents 429 storms + 504 timeouts)
+    const { data: pending } = await db.from('sync_logs')
+      .select('id, started_at')
+      .eq('profile_id', profile_id)
+      .in('status', ['reports_pending', 'running', 'downloading'])
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (pending) {
+      const ageMin = (Date.now() - new Date(pending.started_at).getTime()) / 60000
+      if (ageMin < 30) {
+        return new Response(JSON.stringify({ success: false, error: 'Sync already in progress' }), {
+          status: 409, headers: { ...CORS, 'Content-Type': 'application/json' },
+        })
+      }
+    }
 
     // Amazon max per request = 31 days. Split 60d into two 30d batches. v2
     const batches = [

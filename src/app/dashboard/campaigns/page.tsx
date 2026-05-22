@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import DateRangePicker from '@/components/DateRangePicker'
@@ -136,7 +137,9 @@ export default async function CampaignsPage({
             ))}
           </div>
           {/* Custom date range */}
-          <DateRangePicker start={startStr} end={endStr} basePath="/dashboard/campaigns" />
+          <Suspense fallback={null}>
+            <DateRangePicker start={startStr} end={endStr} basePath="/dashboard/campaigns" />
+          </Suspense>
         </div>
       </div>
 

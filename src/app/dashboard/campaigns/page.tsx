@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import DateRangePicker from '@/components/DateRangePicker'
 
 export const revalidate = 0
 
@@ -28,23 +29,28 @@ function AdTypePill({ type }: { type: string }) {
   )
 }
 
+function dateStr(daysAgo: number) {
+  const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().split('T')[0]
+}
+
 export default async function CampaignsPage({
   searchParams,
 }: {
-  searchParams: { profile_id?: string; days?: string; type?: string; state?: string }
+  searchParams: { profile_id?: string; days?: string; start?: string; end?: string; type?: string; state?: string }
 }) {
   const supabase = await createClient()
 
   const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id, marketplace').order('created_at').limit(10)
   const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
   const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
-  const days  = Number(searchParams.days ?? 30)
-  const type  = searchParams.type
-  const state = searchParams.state
+  const days     = Number(searchParams.days ?? 30)
+  const type     = searchParams.type
+  const state    = searchParams.state
+  const isCustom = !!(searchParams.start && searchParams.end)
+  const startStr = searchParams.start ?? dateStr(days)
+  const endStr   = searchParams.end   ?? dateStr(0)
 
   if (!profileId) return <p className="text-sm text-gray-500 p-6">No Amazon account connected.</p>
-
-  const startStr = new Date(Date.now() - days * 86400000).toISOString().split('T')[0]
 
   async function fetchCampaigns(table: 'sp_campaigns' | 'sb_campaigns' | 'sd_campaigns', adType: string) {
     let q = supabase
@@ -52,6 +58,7 @@ export default async function CampaignsPage({
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId!)
       .gte('date', startStr)
+      .lte('date', endStr)
       .range(0, 49999)
     if (state) q = q.eq('state', state)
     const { data } = await q
@@ -87,12 +94,11 @@ export default async function CampaignsPage({
     }))
     .sort((a, b) => b.spend - a.spend)
 
-  const totalSpend  = campaigns.reduce((s, c) => s + c.spend, 0)
-  const totalSales  = campaigns.reduce((s, c) => s + c.sales, 0)
-  const totalOrders = campaigns.reduce((s, c) => s + c.orders, 0)
+  const totalSpend = campaigns.reduce((s, c) => s + c.spend, 0)
+  const totalSales = campaigns.reduce((s, c) => s + c.sales, 0)
 
   const buildUrl = (params: Record<string, string | undefined>) => {
-    const base = { profile_id: String(profileId), days: String(days), type, state, ...params }
+    const base: Record<string, string | undefined> = { profile_id: String(profileId), type, state, ...params }
     const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('&')
     return `/dashboard/campaigns?${qs}`
   }
@@ -104,7 +110,9 @@ export default async function CampaignsPage({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Campaigns</h1>
-          <p className="text-sm text-gray-400 mt-0.5">{campaigns.length} campaigns · {days}d</p>
+          <p className="text-sm text-gray-400 mt-0.5">
+            {campaigns.length} campaigns · {isCustom ? `${startStr} – ${endStr}` : `${days}d`}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Type filter */}
@@ -120,13 +128,15 @@ export default async function CampaignsPage({
           {/* Days filter */}
           <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
             {[7, 14, 30, 60].map(d => (
-              <Link key={d} href={buildUrl({ days: String(d) })}
+              <Link key={d} href={buildUrl({ days: String(d), start: undefined, end: undefined })}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  days === d ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
+                  !isCustom && days === d ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
                 }`}
               >{d}d</Link>
             ))}
           </div>
+          {/* Custom date range */}
+          <DateRangePicker start={startStr} end={endStr} basePath="/dashboard/campaigns" />
         </div>
       </div>
 

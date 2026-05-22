@@ -6,9 +6,11 @@ import { useRouter, useSearchParams } from 'next/navigation'
 export default function DateRangePicker({
   start,
   end,
+  basePath = '/dashboard',
 }: {
   start: string
   end: string
+  basePath?: string
 }) {
   const [startVal, setStartVal] = useState(start)
   const [endVal,   setEndVal]   = useState(end)
@@ -25,7 +27,7 @@ export default function DateRangePicker({
     params.set('start', startVal)
     params.set('end', endVal)
     params.delete('days')
-    router.push(`/dashboard?${params.toString()}`)
+    router.push(`${basePath}?${params.toString()}`)
   }
 
   return (

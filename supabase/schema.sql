@@ -482,5 +482,70 @@ CREATE POLICY "service_all_sync_logs"  ON public.sync_logs         FOR ALL TO se
 CREATE POLICY "service_all_alerts"     ON public.alerts            FOR ALL TO service_role USING (true);
 
 -- ============================================================
+-- 14. SD_CAMPAIGNS (Sponsored Display)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.sd_campaigns (
+  id                  BIGSERIAL    PRIMARY KEY,
+  profile_id          BIGINT       NOT NULL REFERENCES public.amazon_profiles(profile_id) ON DELETE CASCADE,
+  campaign_id         BIGINT       NOT NULL,
+  date                DATE         NOT NULL,
+  campaign_name       VARCHAR(255) NOT NULL,
+  state               VARCHAR(50)  NOT NULL DEFAULT 'enabled',
+  daily_budget_cents  INTEGER,
+  impressions         INTEGER      NOT NULL DEFAULT 0,
+  clicks              INTEGER      NOT NULL DEFAULT 0,
+  spend_cents         INTEGER      NOT NULL DEFAULT 0,
+  sales_cents         INTEGER      NOT NULL DEFAULT 0,
+  orders              INTEGER      NOT NULL DEFAULT 0,
+  units               INTEGER      NOT NULL DEFAULT 0,
+  created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  UNIQUE (profile_id, campaign_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sd_campaigns_profile_date ON public.sd_campaigns(profile_id, date DESC);
+
+CREATE POLICY "sd_campaigns_own"       ON public.sd_campaigns        FOR ALL USING (profile_id IN (SELECT public.my_profile_ids()));
+CREATE POLICY "service_all_sd_camps"   ON public.sd_campaigns        FOR ALL TO service_role USING (true);
+ALTER TABLE public.sd_campaigns ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- OVERVIEW METRICS FUNCTION (SP + SB + SD combined)
+-- Called by dashboard: supabase.rpc('get_overview_metrics', {p_profile_id, p_start, p_end})
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.get_overview_metrics(
+  p_profile_id BIGINT,
+  p_start      DATE,
+  p_end        DATE
+)
+RETURNS TABLE (
+  spend_cents  BIGINT,
+  sales_cents  BIGINT,
+  orders       BIGINT,
+  impressions  BIGINT,
+  clicks       BIGINT
+)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT
+    COALESCE(SUM(spend_cents), 0)::bigint,
+    COALESCE(SUM(sales_cents), 0)::bigint,
+    COALESCE(SUM(orders),      0)::bigint,
+    COALESCE(SUM(impressions), 0)::bigint,
+    COALESCE(SUM(clicks),      0)::bigint
+  FROM (
+    SELECT spend_cents, sales_cents, orders, impressions, clicks
+    FROM public.sp_campaigns
+    WHERE profile_id = p_profile_id AND date >= p_start AND date <= p_end
+    UNION ALL
+    SELECT spend_cents, sales_cents, orders, impressions, clicks
+    FROM public.sb_campaigns
+    WHERE profile_id = p_profile_id AND date >= p_start AND date <= p_end
+    UNION ALL
+    SELECT spend_cents, sales_cents, orders, impressions, clicks
+    FROM public.sd_campaigns
+    WHERE profile_id = p_profile_id AND date >= p_start AND date <= p_end
+  ) combined;
+$$;
+
+-- ============================================================
 -- END OF SCHEMA
 -- ============================================================

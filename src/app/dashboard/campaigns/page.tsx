@@ -95,8 +95,9 @@ export default async function CampaignsPage({
     }))
     .sort((a, b) => b.spend - a.spend)
 
-  const totalSpend = campaigns.reduce((s, c) => s + c.spend, 0)
-  const totalSales = campaigns.reduce((s, c) => s + c.sales, 0)
+  const totalSpend  = campaigns.reduce((s, c) => s + c.spend, 0)
+  const totalSales  = campaigns.reduce((s, c) => s + c.sales, 0)
+  const totalOrders = campaigns.reduce((s, c) => s + c.orders, 0)
 
   const buildUrl = (params: Record<string, string | undefined>) => {
     const base: Record<string, string | undefined> = { profile_id: String(profileId), type, state, ...params }
@@ -144,10 +145,11 @@ export default async function CampaignsPage({
       </div>
 
       {/* Summary strip */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         {[
-          { label: 'Total Spend', value: '$' + (totalSpend / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
-          { label: 'Total Sales', value: '$' + (totalSales / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+          { label: 'Total Spend',  value: '$' + (totalSpend / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+          { label: 'Total Sales',  value: '$' + (totalSales / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+          { label: 'Total Orders', value: totalOrders.toLocaleString() },
           { label: 'Blended ACOS', value: totalSales > 0 ? (totalSpend / totalSales * 100).toFixed(1) + '%' : '—' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm text-center">

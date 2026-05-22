@@ -414,24 +414,28 @@ Deno.serve(async (req) => {
       })
     )
 
-    let total = 0
-    total += await upsertSpCampaigns(db,     pid, dataMap['spCamp'] ?? [])
-    total += await upsertSpKeywords(db,       pid, dataMap['spKw']   ?? [])
-    total += await upsertSpSearchTerms(db,    pid, dataMap['spSt']   ?? [])
-    total += await upsertSbCampaigns(db,      pid, dataMap['sbCamp'] ?? [])
-    total += await upsertSbKeywords(db,       pid, dataMap['sbKw']   ?? [])
-    total += await upsertSbSearchTerms(db,    pid, dataMap['sbSt']   ?? [])
-    // Log SB keyword sales totals — tells us if sbTargeting supports sales14d columns
-    const sbKwRows = dataMap['sbKw'] ?? []
-    const sbKwSalesTotal = sbKwRows.reduce((s: number, r: any) => s + toCents(r.sales14d), 0)
-    const sbKwOrdersTotal = sbKwRows.reduce((s: number, r: any) => s + n(r.purchases14d), 0)
-    console.log(`[poll] SB Keywords sales check: ${sbKwRows.length} rows, total sales=$${(sbKwSalesTotal/100).toFixed(2)}, orders=${sbKwOrdersTotal}`)
+    let spTotal = 0, sbTotal = 0, sdTotal = 0
+
+    spTotal += await upsertSpCampaigns(db,  pid, dataMap['spCamp'] ?? [])
+    spTotal += await upsertSpKeywords(db,   pid, dataMap['spKw']   ?? [])
+    spTotal += await upsertSpSearchTerms(db,pid, dataMap['spSt']   ?? [])
+    sbTotal += await upsertSbCampaigns(db,  pid, dataMap['sbCamp'] ?? [])
+    sbTotal += await upsertSbKeywords(db,   pid, dataMap['sbKw']   ?? [])
+    sbTotal += await upsertSbSearchTerms(db,pid, dataMap['sbSt']   ?? [])
     // sbAttr: aggregate purchased-product rows by campaign+date, UPDATE (or INSERT) sb_campaigns sales/orders
-    total += await updateSbCampaignSales(db,  pid, dataMap['sbAttr'] ?? [], dataMap['sbCamp'] ?? [])
-    total += await upsertSdCampaigns(db,      pid, dataMap['sdCamp'] ?? [])
+    sbTotal += await updateSbCampaignSales(db, pid, dataMap['sbAttr'] ?? [], dataMap['sbCamp'] ?? [])
+    sdTotal += await upsertSdCampaigns(db,  pid, dataMap['sdCamp'] ?? [])
+
+    const total = spTotal + sbTotal + sdTotal
+    console.log(`[poll] Records by type — SP: ${spTotal}, SB: ${sbTotal}, SD: ${sdTotal}, Total: ${total}`)
 
     await db.from('amazon_profiles').update({ last_sync_at: new Date().toISOString() }).eq('profile_id', pid)
-    await db.from('sync_logs').update({ status: (anyFailed || skippedReports > 0) ? 'partial' : 'success', completed_at: new Date().toISOString(), records_upserted: total }).eq('id', log.id)
+    await db.from('sync_logs').update({
+      status: (anyFailed || skippedReports > 0) ? 'partial' : 'success',
+      completed_at: new Date().toISOString(),
+      records_upserted: total,
+      metadata: { records_by_type: { sp: spTotal, sb: sbTotal, sd: sdTotal } },
+    }).eq('id', log.id)
 
     console.log(`[poll] Done — ${total} records upserted`)
     return new Response(JSON.stringify({ status: 'success', records_upserted: total }), {

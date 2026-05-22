@@ -236,6 +236,10 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
 
       {showHistory && (
         <div className="mt-3 border-t border-gray-50 pt-3 space-y-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-medium text-gray-500">Recent syncs</span>
+            <a href={`/dashboard/sync-history?profile_id=${profileId}`} className="text-xs text-orange-500 hover:text-orange-600 font-medium transition-colors">View all →</a>
+          </div>
           {history.length === 0 ? (
             <p className="text-xs text-gray-400 text-center py-2">No sync history</p>
           ) : history.map(log => {

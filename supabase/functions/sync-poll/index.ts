@@ -226,9 +226,9 @@ async function updateSbCampaignSales(db: any, pid: number, rows: any[], sbCampRo
     const ex = map.get(key)
     if (ex) {
       ex.sales_cents += toCents(r.sales14d)
-      ex.orders      += n(r.orders14d)
+      ex.orders      += n(r.purchases14d)
     } else {
-      map.set(key, { campaign_id: n(r.campaignId), date: r.date, sales_cents: toCents(r.sales14d), orders: n(r.orders14d) })
+      map.set(key, { campaign_id: n(r.campaignId), date: r.date, sales_cents: toCents(r.sales14d), orders: n(r.purchases14d) })
     }
   }
   console.log(`[poll] sbAttr: ${map.size} unique campaign+date keys`)
@@ -349,6 +349,10 @@ Deno.serve(async (req) => {
     const amazonPid = String(profile.profile_id)
 
     // Check all report statuses in parallel (single round, no loop)
+    // Count reports that were never submitted (null) — these will be reflected in final status
+    const skippedReports = Object.entries(ids).filter(([k]) => !['startDate','endDate'].includes(k) && !ids[k]).length
+    if (skippedReports > 0) console.log(`[poll] ${skippedReports} report(s) were skipped at submission time (throttled)`)
+
     const reportEntries = Object.entries(ids).filter(([k]) => !['startDate','endDate'].includes(k) && ids[k])
 
     const statuses = await Promise.all(
@@ -427,7 +431,7 @@ Deno.serve(async (req) => {
     total += await upsertSdCampaigns(db,      pid, dataMap['sdCamp'] ?? [])
 
     await db.from('amazon_profiles').update({ last_sync_at: new Date().toISOString() }).eq('profile_id', pid)
-    await db.from('sync_logs').update({ status: anyFailed ? 'partial' : 'success', completed_at: new Date().toISOString(), records_upserted: total }).eq('id', log.id)
+    await db.from('sync_logs').update({ status: (anyFailed || skippedReports > 0) ? 'partial' : 'success', completed_at: new Date().toISOString(), records_upserted: total }).eq('id', log.id)
 
     console.log(`[poll] Done — ${total} records upserted`)
     return new Response(JSON.stringify({ status: 'success', records_upserted: total }), {

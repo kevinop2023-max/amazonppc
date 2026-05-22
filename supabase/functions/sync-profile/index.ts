@@ -59,7 +59,8 @@ async function refreshAccessToken(rt: string) {
 }
 
 async function createReport(token: string, pid: string, name: string, adProduct: string, typeId: string, groupBy: string[], cols: string[], start: string, end: string, filters?: Array<{field: string, values: string[]}>): Promise<string | null> {
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  const RETRY_WAITS = [15000, 30000, 60000]
+  for (let attempt = 1; attempt <= RETRY_WAITS.length + 1; attempt++) {
     try {
       const config: Record<string, any> = { adProduct, groupBy, columns: cols, reportTypeId: typeId, timeUnit: 'DAILY', format: 'GZIP_JSON' }
       if (filters?.length) config.filters = filters
@@ -75,15 +76,15 @@ async function createReport(token: string, pid: string, name: string, adProduct:
       })
       const text = await res.text()
       if (res.status === 429) {
-        const wait = attempt * 4000
-        console.log(`[sync] ${name} throttled (attempt ${attempt}), retrying in ${wait / 1000}s...`)
+        const wait = RETRY_WAITS[attempt - 1] ?? 60000
+        console.log(`[sync] ${name} throttled (attempt ${attempt}/${RETRY_WAITS.length + 1}), retrying in ${wait / 1000}s... body=${text.slice(0, 200)}`)
         await new Promise(r => setTimeout(r, wait))
         continue
       }
       if (!res.ok) {
         const dup = text.match(/duplicate of\s*[:\s]+([a-f0-9-]{36})/i)
         if (dup) { console.log(`[sync] Reuse ${name} → ${dup[1]}`); return dup[1] }
-        console.error(`[sync] Skip ${name}: ${res.status} ${text.slice(0, 200)}`); return null
+        console.error(`[sync] FAIL ${name}: HTTP ${res.status} → ${text.slice(0, 400)}`); return null
       }
       const d = text.trim().startsWith('[') ? JSON.parse(text)[0] : JSON.parse(text.split('\n')[0])
       console.log(`[sync] Created ${name} → ${d.reportId}`); return d.reportId
@@ -152,14 +153,28 @@ Deno.serve(async (req) => {
     const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
-    const SB_ATTR = ['date','campaignId','sales14d','orders14d']
+    const SB_ATTR = ['date','campaignId','sales14d','purchases14d']
     // SD campaign report — purchases14d/sales14d not supported; spend/traffic only
     const SD_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
 
     const logIds: number[] = []
 
     for (let i = 0; i < batches.length; i++) {
-      if (i > 0) await new Promise(r => setTimeout(r, 3000)) // avoid 429 throttle between batches
+      if (i > 0) {
+        await new Promise(r => setTimeout(r, 3000))
+        // Re-read token from DB — a concurrent invocation may have refreshed it, revoking ours
+        const { data: freshProfile } = await db.from('amazon_profiles')
+          .select('access_token_enc, refresh_token_enc, token_expires_at')
+          .eq('profile_id', profile_id).single()
+        if (freshProfile) {
+          token = await decryptToken(freshProfile.access_token_enc)
+          if (new Date(freshProfile.token_expires_at) <= new Date()) {
+            const r = await refreshAccessToken(await decryptToken(freshProfile.refresh_token_enc))
+            token = r.accessToken
+            await db.from('amazon_profiles').update({ access_token_enc: await encryptToken(token), token_expires_at: r.expiresAt.toISOString() }).eq('profile_id', profile_id)
+          }
+        }
+      }
       const { startDate, endDate } = batches[i]
       console.log(`[sync] Creating SP reports for ${startDate} → ${endDate}...`)
       const [spCamp, spKw, spSt] = await Promise.all([
@@ -167,18 +182,18 @@ Deno.serve(async (req) => {
         createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate),
         createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate),
       ])
-      // Wait between SP and SB to avoid throttling SB reports
-      await new Promise(r => setTimeout(r, 10000))
+      // Wait between SP and SB — SB has a tighter rate limit than SP
+      await new Promise(r => setTimeout(r, 15000))
       console.log(`[sync] Creating SB reports for ${startDate} → ${endDate}...`)
-      const [sbCamp, sbKw, sbSt] = await Promise.all([
-        createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate),
-        createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate),
-        createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate),
-      ])
-      // sbPurchasedProduct separately — parallel creation with other SB reports triggers 429
-      await new Promise(r => setTimeout(r, 5000))
+      // sbPurchasedProduct FIRST — it has the tightest rate limit; submit when the bucket is freshest
       const sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate)
-      // Wait between SB and SD to avoid throttling
+      await new Promise(r => setTimeout(r, 5000))
+      // Sequential with 8s gaps — firing SB requests too close together triggers 429
+      const sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate)
+      await new Promise(r => setTimeout(r, 8000))
+      const sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate)
+      await new Promise(r => setTimeout(r, 8000))
+      const sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate)
       await new Promise(r => setTimeout(r, 5000))
       console.log(`[sync] Creating SD reports for ${startDate} → ${endDate}...`)
       const [sdCamp] = await Promise.all([

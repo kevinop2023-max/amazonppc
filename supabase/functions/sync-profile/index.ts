@@ -153,7 +153,7 @@ Deno.serve(async (req) => {
     const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
     const SB_ST   = ['date','campaignId','adGroupId','impressions','clicks','cost']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
-    const SB_ATTR = ['date','campaignId','sales14d','purchases14d']
+    const SB_ATTR = ['date','campaignId','sales14d','orders14d']
     // SD campaign report — purchases14d/sales14d not supported; spend/traffic only
     const SD_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
 

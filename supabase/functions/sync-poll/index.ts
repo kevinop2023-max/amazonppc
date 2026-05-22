@@ -226,9 +226,9 @@ async function updateSbCampaignSales(db: any, pid: number, rows: any[], sbCampRo
     const ex = map.get(key)
     if (ex) {
       ex.sales_cents += toCents(r.sales14d)
-      ex.orders      += n(r.purchases14d)
+      ex.orders      += n(r.orders14d)
     } else {
-      map.set(key, { campaign_id: n(r.campaignId), date: r.date, sales_cents: toCents(r.sales14d), orders: n(r.purchases14d) })
+      map.set(key, { campaign_id: n(r.campaignId), date: r.date, sales_cents: toCents(r.sales14d), orders: n(r.orders14d) })
     }
   }
   console.log(`[poll] sbAttr: ${map.size} unique campaign+date keys`)

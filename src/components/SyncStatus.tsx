@@ -27,6 +27,8 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
   const [syncing,           setSyncing]           = useState(false)
   const [msg,               setMsg]               = useState<string | null>(null)
   const [otherBatchPending, setOtherBatchPending] = useState(false)
+  const [showHistory,       setShowHistory]       = useState(false)
+  const [history,           setHistory]           = useState<SyncLog[]>([])
   const supabase = useRef(createClient()).current
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -101,19 +103,13 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
     setSyncing(true)
     setMsg(null)
     try {
-      // Force token refresh before invoking — getSession() reads stale storage, refreshSession() fetches a new JWT
-      const { error: refreshErr } = await supabase.auth.refreshSession()
-      if (refreshErr) { window.location.href = '/login'; return }
-
-      const { data, error } = await supabase.functions.invoke('sync-profile', {
-        body: { profile_id: profileId, triggered_by: 'manual' },
+      const res = await fetch('/api/v1/sync', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ profile_id: profileId }),
       })
-      if (error) {
-        const status = (error as any)?.context?.status
-        let msg = `Function error (${status ?? 'unknown'})`
-        try { const b = await (error as any)?.context?.json?.(); if (b?.error) msg = b.error } catch {}
-        throw new Error(msg)
-      }
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error ?? `Server error (${res.status})`)
       if (!data?.success) throw new Error(data?.error ?? 'Failed to start sync')
       setMsg('✓ Sync started (2 batches) — data will update in 10–15 minutes')
       // Refresh sync log to get the new id
@@ -129,6 +125,18 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       setMsg(e?.message ?? 'Failed to trigger sync')
       setSyncing(false)
     }
+  }
+
+  async function toggleHistory() {
+    if (showHistory) { setShowHistory(false); return }
+    const { data } = await supabase
+      .from('sync_logs')
+      .select('id, status, started_at, completed_at, records_upserted, error_message')
+      .eq('profile_id', profileId)
+      .order('started_at', { ascending: false })
+      .limit(10)
+    setHistory(data ?? [])
+    setShowHistory(true)
   }
 
   async function stopSync() {
@@ -209,6 +217,13 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
           {isRunning ? 'Syncing…' : '↻  Sync now'}
         </button>
 
+        <button
+          onClick={toggleHistory}
+          className="text-xs font-semibold py-2.5 px-4 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-all"
+        >
+          {showHistory ? 'Hide' : 'History'}
+        </button>
+
         {isRunning && (
           <button
             onClick={stopSync}
@@ -218,6 +233,27 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
           </button>
         )}
       </div>
+
+      {showHistory && (
+        <div className="mt-3 border-t border-gray-50 pt-3 space-y-2">
+          {history.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-2">No sync history</p>
+          ) : history.map(log => {
+            const hcfg = statusConfig[log.status as keyof typeof statusConfig] ?? statusConfig.partial
+            const t = log.completed_at ?? log.started_at
+            const label = t ? new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
+            return (
+              <div key={log.id} className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-gray-400 shrink-0" suppressHydrationWarning>{label}</span>
+                <span className={`px-2 py-0.5 rounded-full border font-medium ${hcfg.badge}`}>{hcfg.label}</span>
+                <span className="text-gray-500 tabular-nums text-right">
+                  {log.records_upserted != null ? `${log.records_upserted.toLocaleString()} rec` : '—'}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

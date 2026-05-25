@@ -49,7 +49,7 @@ export default async function CampaignsPage({
   const state    = searchParams.state
   const isCustom = !!(searchParams.start && searchParams.end)
   const startStr = searchParams.start ?? dateStr(days)
-  const endStr   = searchParams.end   ?? dateStr(0)
+  const endStr   = searchParams.end   ?? dateStr(1)
 
   if (!profileId) return <p className="text-sm text-gray-500 p-6">No Amazon account connected.</p>
 

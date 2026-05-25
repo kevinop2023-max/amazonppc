@@ -37,7 +37,7 @@ export default async function DashboardPage({
   // Date range: custom start/end overrides days buttons
   const days     = Number(searchParams.days ?? 30)
   const startStr = searchParams.start ?? dateStr(days)
-  const endStr   = searchParams.end   ?? dateStr(0)
+  const endStr   = searchParams.end   ?? dateStr(1)
 
   const isCustomRange = !!(searchParams.start && searchParams.end)
 

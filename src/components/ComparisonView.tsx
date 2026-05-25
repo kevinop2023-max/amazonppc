@@ -430,9 +430,9 @@ function CampaignsTab({ camps, terms }: { camps: CampComp[]; terms: TermComp[] }
 // ── Search Terms tab ──────────────────────────────────────────────────────────
 
 function SearchTermsTab({ terms }: { terms: TermComp[] }) {
-  const [subTab, setSubTab] = useState<'harvest' | 'wasted'>('harvest')
+  const [subTab, setSubTab] = useState<'all' | 'harvest' | 'wasted'>('harvest')
 
-  // Aggregate terms cross-campaign
+  // Aggregate terms cross-campaign; track campaign with highest B spend per term
   const global = useMemo(() => {
     const map = new Map<string, {
       aSpend: number; aSales: number; aOrders: number; aClicks: number
@@ -451,133 +451,124 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
     return Array.from(map.entries()).map(([term, m]) => ({ term, ...m }))
   }, [terms])
 
-  const harvest = useMemo(() =>
-    global.filter(t => t.bOrders > 0).sort((a, b) => b.bOrders - a.bOrders),
-    [global]
-  )
+  const harvest = useMemo(() => global.filter(t => t.bOrders > 0).sort((a, b) => b.bOrders - a.bOrders), [global])
+  const wasted  = useMemo(() => global.filter(t => t.bSpend > 300 && t.bOrders === 0).sort((a, b) => b.bSpend - a.bSpend), [global])
+  const all     = useMemo(() => [...global].sort((a, b) => b.bSpend - a.bSpend), [global])
 
-  const wasted = useMemo(() =>
-    global.filter(t => t.bSpend > 300 && t.bOrders === 0).sort((a, b) => b.bSpend - a.bSpend),
-    [global]
-  )
+  const rows = subTab === 'harvest' ? harvest : subTab === 'wasted' ? wasted : all
+
+  const emptyMsg = subTab === 'harvest'
+    ? 'No converting search terms in period B.'
+    : subTab === 'wasted'
+    ? 'No wasted search terms in period B (min $3 spend, 0 orders).'
+    : 'No search term data for the selected periods.'
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        {[
-          { key: 'harvest', label: `Harvest Terms (${harvest.length})` },
-          { key: 'wasted',  label: `Wasted Terms (${wasted.length})` },
-        ].map(tab => (
+        {([
+          ['all',     `All (${all.length})`],
+          ['harvest', `Harvest Terms (${harvest.length})`],
+          ['wasted',  `Wasted Terms (${wasted.length})`],
+        ] as [string, string][]).map(([key, label]) => (
           <button
-            key={tab.key}
-            onClick={() => setSubTab(tab.key as 'harvest' | 'wasted')}
+            key={key}
+            onClick={() => setSubTab(key as typeof subTab)}
             className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all border ${
-              subTab === tab.key
+              subTab === key
                 ? 'bg-gray-900 text-white border-gray-900'
                 : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
             }`}
-          >{tab.label}</button>
+          >{label}</button>
         ))}
       </div>
 
-      {subTab === 'harvest' && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-gray-50/60 border-b border-gray-100">
-                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search Term</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Orders</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B ACoS</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Sales</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase">Change</th>
-                  <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase">Status</th>
-                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-gray-400 uppercase">Recommendation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {harvest.length === 0 ? (
-                  <tr><td colSpan={9} className="py-12 text-center text-sm text-gray-400">No converting search terms in period B.</td></tr>
-                ) : harvest.map((t, i) => {
-                  const tAa = acosPct(t.aSpend, t.aSales)
-                  const tBa = acosPct(t.bSpend, t.bSales)
-                  const change = tAa !== null && tBa !== null ? tBa - tAa : null
-                  const status = t.aOrders > 0 && t.bOrders > 0 ? 'Both' : t.aOrders === 0 ? 'New' : 'Lost'
-                  const rec = tBa !== null && tBa < 25 ? '🚀 Scale Up' : t.aOrders === 0 ? '📌 Add Exact' : '👁 Monitor'
-                  const statusCls = status === 'Both' ? 'bg-emerald-100 text-emerald-700' : status === 'New' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
-                  return (
-                    <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40 transition-colors">
-                      <td className="px-5 py-3 font-medium text-gray-900 max-w-xs truncate">{t.term}</td>
-                      <td className="px-3 py-3 text-right text-blue-600 tabular-nums">{t.aOrders || '—'}</td>
-                      <td className="px-3 py-3 text-right text-blue-600 tabular-nums">{tAa !== null ? tAa.toFixed(1) + '%' : '—'}</td>
-                      <td className="px-3 py-3 text-right text-purple-600 font-semibold tabular-nums">{t.bOrders}</td>
-                      <td className="px-3 py-3 text-right text-purple-600 tabular-nums">{tBa !== null ? tBa.toFixed(1) + '%' : '—'}</td>
-                      <td className="px-3 py-3 text-right text-purple-600 tabular-nums">{fmtD(t.bSales)}</td>
-                      <td className="px-3 py-3 text-right">
-                        <DeltaBadge value={change} unit="pp" lowerIsBetter threshold={1} />
-                      </td>
-                      <td className="px-3 py-3 text-center">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusCls}`}>{status}</span>
-                      </td>
-                      <td className="px-5 py-3 text-right">{rec}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50/60 border-b border-gray-100">
+                <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Search Term</th>
+                <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Campaign</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Clicks</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Spend</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Orders</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B ACoS</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Sales</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Clicks</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Spend</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Change</th>
+                <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Status</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Recommendation</th>
+                <th className="text-right px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">B Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={15} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
+              ) : rows.map((t, i) => {
+                const tAa = acosPct(t.aSpend, t.aSales)
+                const tBa = acosPct(t.bSpend, t.bSales)
+                const acosDelta = tAa !== null && tBa !== null ? tBa - tAa : null
 
-      {subTab === 'wasted' && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-gray-50/60 border-b border-gray-100">
-                  <th className="text-left px-5 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Search Term</th>
-                  <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase">Campaign</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Clicks</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Spend</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Clicks</th>
-                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Spend</th>
-                  <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase">Status</th>
-                  <th className="text-right px-5 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">B Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {wasted.length === 0 ? (
-                  <tr><td colSpan={8} className="py-12 text-center text-sm text-gray-400">No wasted search terms in period B (min $3 spend, 0 orders).</td></tr>
-                ) : wasted.map((t, i) => {
-                  const isOngoing = t.aSpend > 0 && t.aOrders === 0
-                  const status = isOngoing ? 'Ongoing' : 'New Issue'
-                  const statusCls = isOngoing ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-red-50 text-red-600 border border-red-200'
-                  const action = t.bSpend > 3000 ? 'Neg. Exact' : 'Monitor'
-                  const actionCls = t.bSpend > 3000 ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
-                  return (
-                    <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40 transition-colors">
-                      <td className="px-5 py-3 font-medium text-gray-900 max-w-[200px] truncate">{t.term}</td>
-                      <td className="px-3 py-3 text-gray-500 max-w-[180px] truncate">{t.bestCampName || '—'}</td>
-                      <td className="px-3 py-3 text-right text-blue-600 tabular-nums">{t.aClicks || '—'}</td>
-                      <td className="px-3 py-3 text-right text-blue-600 tabular-nums">{t.aSpend > 0 ? fmtD(t.aSpend) : '—'}</td>
-                      <td className="px-3 py-3 text-right text-purple-600 font-semibold tabular-nums">{t.bClicks}</td>
-                      <td className="px-3 py-3 text-right text-purple-600 font-semibold tabular-nums">{fmtD(t.bSpend)}</td>
-                      <td className="px-3 py-3 text-center">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusCls}`}>{status}</span>
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${actionCls}`}>{action}</span>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                // Status
+                const isHarvest = t.bOrders > 0
+                const isWasted  = t.bSpend > 300 && t.bOrders === 0
+                let status = '—'; let statusCls = 'bg-gray-100 text-gray-400'
+                if (isHarvest) {
+                  if (t.aOrders > 0) { status = 'Both';  statusCls = 'bg-emerald-100 text-emerald-700' }
+                  else               { status = 'New';   statusCls = 'bg-blue-100 text-blue-700' }
+                  if (t.aOrders > 0 && t.bOrders === 0) { status = 'Lost'; statusCls = 'bg-amber-100 text-amber-700' }
+                } else if (isWasted) {
+                  if (t.aSpend > 0 && t.aOrders === 0) { status = 'Ongoing';   statusCls = 'bg-amber-50 text-amber-700 border border-amber-200' }
+                  else                                   { status = 'New Issue'; statusCls = 'bg-red-50 text-red-600 border border-red-200' }
+                }
+
+                // Recommendation (harvest) & B Action (wasted)
+                const rec    = isHarvest ? (tBa !== null && tBa < 25 ? '🚀 Scale Up' : t.aOrders === 0 ? '📌 Add Exact' : '👁 Monitor') : '—'
+                const action = isWasted  ? (t.bSpend > 3000 ? 'Neg. Exact' : 'Monitor') : '—'
+                const actionCls = t.bSpend > 3000
+                  ? 'bg-red-50 text-red-600 border border-red-200'
+                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+
+                return (
+                  <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40 transition-colors">
+                    <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[180px] truncate">{t.term}</td>
+                    <td className="px-3 py-2.5 text-gray-500 max-w-[150px] truncate text-[11px]">{t.bestCampName || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aOrders || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{tAa !== null ? tAa.toFixed(1) + '%' : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aClicks || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aSpend > 0 ? fmtD(t.aSpend) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{t.bOrders || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{tBa !== null ? tBa.toFixed(1) + '%' : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{t.bSales > 0 ? fmtD(t.bSales) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{t.bClicks || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{t.bSpend > 0 ? fmtD(t.bSpend) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right">
+                      <DeltaBadge value={acosDelta} unit="pp" lowerIsBetter threshold={1} />
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {status === '—'
+                        ? <span className="text-[11px] text-gray-300">—</span>
+                        : <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusCls}`}>{status}</span>
+                      }
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-[11px]">{rec}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      {action === '—'
+                        ? <span className="text-[11px] text-gray-300">—</span>
+                        : <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${actionCls}`}>{action}</span>
+                      }
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
-      )}
+      </div>
     </div>
   )
 }

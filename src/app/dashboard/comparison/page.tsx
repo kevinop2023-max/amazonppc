@@ -41,16 +41,16 @@ export default async function ComparisonPage({
   // 6 parallel queries
   const [spARes, spBRes, sbARes, sbBRes, stARes, stBRes] = await Promise.all([
     supabase.from('sp_campaigns')
-      .select('campaign_id, campaign_name, state, spend_cents, sales_cents, orders, impressions, clicks')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sp_campaigns')
-      .select('campaign_id, campaign_name, state, spend_cents, sales_cents, orders, impressions, clicks')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sb_campaigns')
-      .select('campaign_id, campaign_name, state, spend_cents, sales_cents, orders, impressions, clicks')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sb_campaigns')
-      .select('campaign_id, campaign_name, state, spend_cents, sales_cents, orders, impressions, clicks')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sp_search_terms')
       .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks')
@@ -62,10 +62,10 @@ export default async function ComparisonPage({
 
   // Aggregate campaign rows by campaign_id
   function aggCampMap(rows: any[]) {
-    const map = new Map<number, { name: string; state: string; spend: number; sales: number; orders: number; imp: number; clicks: number }>()
+    const map = new Map<number, { name: string; state: string; budget: number; spend: number; sales: number; orders: number; imp: number; clicks: number }>()
     for (const r of rows) {
       if (!map.has(r.campaign_id)) {
-        map.set(r.campaign_id, { name: r.campaign_name ?? '', state: r.state ?? 'enabled', spend: 0, sales: 0, orders: 0, imp: 0, clicks: 0 })
+        map.set(r.campaign_id, { name: r.campaign_name ?? '', state: r.state ?? 'enabled', budget: 0, spend: 0, sales: 0, orders: 0, imp: 0, clicks: 0 })
       }
       const c = map.get(r.campaign_id)!
       c.spend  += n(r.spend_cents)
@@ -73,6 +73,9 @@ export default async function ComparisonPage({
       c.orders += n(r.orders)
       c.imp    += n(r.impressions)
       c.clicks += n(r.clicks)
+      // Take the highest seen daily_budget_cents as the effective budget
+      const bgt = n(r.daily_budget_cents)
+      if (bgt > c.budget) c.budget = bgt
     }
     return map
   }
@@ -92,7 +95,8 @@ export default async function ComparisonPage({
       const b = bMap.get(id)
       camps.push({
         id, name: b?.name ?? a?.name ?? '', type,
-        state: b?.state ?? a?.state ?? 'enabled',
+        state:  b?.state  ?? a?.state  ?? 'enabled',
+        budget: b?.budget ?? a?.budget ?? 0,
         aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aImp: a?.imp ?? 0, aClicks: a?.clicks ?? 0,
         bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bImp: b?.imp ?? 0, bClicks: b?.clicks ?? 0,
       })

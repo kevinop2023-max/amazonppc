@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type CampComp = {
-  id: number; name: string; type: 'SP' | 'SB'; state: string
+  id: number; name: string; type: 'SP' | 'SB'; state: string; budget: number
   aSpend: number; aSales: number; aOrders: number; aImp: number; aClicks: number
   bSpend: number; bSales: number; bOrders: number; bImp: number; bClicks: number
 }
@@ -181,7 +181,7 @@ function CampExpanded({ camp, terms }: { camp: CampComp; terms: TermComp[] }) {
 
   return (
     <tr>
-      <td colSpan={14} className="px-4 py-4 bg-gray-50/40 border-b border-gray-100">
+      <td colSpan={15} className="px-4 py-4 bg-gray-50/40 border-b border-gray-100">
 
         {/* A vs B metric panels */}
         <div className="grid grid-cols-2 gap-4 mb-4">
@@ -333,6 +333,7 @@ function CampaignsTab({ camps, terms }: { camps: CampComp[]; terms: TermComp[] }
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Spend</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Spend</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Spend Δ</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Daily Budget</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Sales</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Sales</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
@@ -343,7 +344,7 @@ function CampaignsTab({ camps, terms }: { camps: CampComp[]; terms: TermComp[] }
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="py-12 text-center text-sm text-gray-400">No campaigns match your filter.</td>
+                  <td colSpan={15} className="py-12 text-center text-sm text-gray-400">No campaigns match your filter.</td>
                 </tr>
               ) : filtered.map(c => {
                 const key = `${c.type}-${c.id}`
@@ -381,6 +382,11 @@ function CampaignsTab({ camps, terms }: { camps: CampComp[]; terms: TermComp[] }
                       <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{fmtD(c.aSpend)}</td>
                       <td className="px-3 py-2.5 text-right text-purple-700 font-semibold tabular-nums">{fmtD(c.bSpend)}</td>
                       <td className="px-3 py-2.5 text-right"><SpendDeltaBadge value={spendDelta} /></td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {c.budget > 0
+                          ? <span className="text-[11px] text-gray-500">{fmtD(c.budget)}<span className="text-gray-400">/day</span></span>
+                          : <span className="text-[11px] text-gray-300">—</span>}
+                      </td>
                       <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{fmtD(c.aSales)}</td>
                       <td className="px-3 py-2.5 text-right text-purple-700 tabular-nums">{fmtD(c.bSales)}</td>
                       <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{c.aOrders || '—'}</td>

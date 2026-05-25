@@ -282,7 +282,7 @@ function CampaignsTab({ camps, terms }: { camps: CampComp[]; terms: TermComp[] }
     camps
       .filter(c => !typeFilter || c.type === typeFilter)
       .filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()))
-      .filter(c => showPaused || c.state === 'enabled'),
+      .filter(c => showPaused || c.state?.toLowerCase() === 'enabled'),
     [camps, typeFilter, search, showPaused]
   )
 
@@ -590,7 +590,7 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
   const labelA = `${fmtDate(aStart)} – ${fmtDate(aEnd)}`
   const labelB = `${fmtDate(bStart)} – ${fmtDate(bEnd)}`
 
-  const enabledCount = camps.filter(c => c.state === 'enabled').length
+  const enabledCount = camps.filter(c => c.state?.toLowerCase() === 'enabled').length
   const termCount    = new Set(terms.map(t => t.term)).size
 
   const tabs = [

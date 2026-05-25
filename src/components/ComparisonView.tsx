@@ -27,6 +27,20 @@ interface Props {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function clientDateStr(daysAgo: number) {
+  const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().split('T')[0]
+}
+
+function quickSplit(totalDays: number) {
+  const half = Math.floor(totalDays / 2)
+  return {
+    aStart: clientDateStr(totalDays),
+    aEnd:   clientDateStr(half + 1),
+    bStart: clientDateStr(half),
+    bEnd:   clientDateStr(1),
+  }
+}
+
 function fmtD(cents: number) {
   return '$' + (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
@@ -622,6 +636,25 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
 
       {/* Period selectors */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        {/* Quick-split buttons */}
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs text-gray-400 font-medium">Quick split:</span>
+          {[14, 30, 60].map(d => (
+            <button
+              key={d}
+              onClick={() => {
+                const q = quickSplit(d)
+                setAs(q.aStart); setAe(q.aEnd); setBs(q.bStart); setBe(q.bEnd)
+                const params = new URLSearchParams({ profile_id: String(profileId), aStart: q.aStart, aEnd: q.aEnd, bStart: q.bStart, bEnd: q.bEnd })
+                router.push(`/dashboard/comparison?${params}`)
+              }}
+              className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600 transition-all"
+            >
+              {d}d
+            </button>
+          ))}
+          <span className="text-[11px] text-gray-300 ml-1">auto-splits into A (first half) + B (second half)</span>
+        </div>
         <div className="flex flex-wrap items-end gap-4">
           {[
             { label: 'A (Previous)', color: 'text-blue-600 border-blue-200 bg-blue-50', s: as, setS: setAs, e: ae, setE: setAe },

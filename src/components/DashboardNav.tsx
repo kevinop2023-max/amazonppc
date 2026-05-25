@@ -33,6 +33,7 @@ export default function DashboardNav({ user, profiles }: { user: User; profiles:
     { href: `/dashboard/search-terms${p}`, label: 'Search Terms', icon: '⌕' },
     { href: `/dashboard/keywords${p}`,     label: 'Keywords',     icon: '◇' },
     { href: `/dashboard/alerts${p}`,       label: 'Alerts',       icon: '◉' },
+    { href: `/dashboard/data-sync${p}`,    label: 'Data Sync',    icon: '↺' },
   ]
 
   const activeProfile = profiles[0]
@@ -55,7 +56,7 @@ export default function DashboardNav({ user, profiles }: { user: User; profiles:
 
             <div className="hidden md:flex items-center gap-0.5">
               {links.map(link => {
-                const active = pathname === link.href
+                const active = pathname === link.href.split('?')[0]
                 return (
                   <Link
                     key={link.href}

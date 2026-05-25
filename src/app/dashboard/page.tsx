@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
 import MetricCard from '@/components/MetricCard'
-import SyncStatus from '@/components/SyncStatus'
 import AlertsPanel from '@/components/AlertsPanel'
 import ProfileSelector from '@/components/ProfileSelector'
 import DateRangePicker from '@/components/DateRangePicker'
@@ -14,6 +13,28 @@ function fmt$(cents: number) {
 
 function dateStr(daysAgo: number) {
   const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().split('T')[0]
+}
+
+function fmtDate(s: string) {
+  return new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+type CampRow = { campaign_id: number; campaign_name: string; spend_cents: number; sales_cents: number; orders: number }
+
+function agg(rows: CampRow[]) {
+  const ids = new Set<number>()
+  let spend = 0, sales = 0, orders = 0
+  for (const r of rows) {
+    spend  += r.spend_cents ?? 0
+    sales  += r.sales_cents ?? 0
+    orders += r.orders      ?? 0
+    ids.add(r.campaign_id)
+  }
+  return {
+    spend, sales, orders, campaigns: ids.size,
+    acos: sales > 0 ? (spend / sales * 100).toFixed(1) + '%' : '—',
+    roas: spend > 0 ? (sales / spend).toFixed(2) + 'x' : '—',
+  }
 }
 
 export default async function DashboardPage({
@@ -34,12 +55,18 @@ export default async function DashboardPage({
     ? Number(searchParams.profile_id)
     : (usProfile ?? profiles?.[0])?.profile_id ?? null
 
-  // Date range: custom start/end overrides days buttons
   const days     = Number(searchParams.days ?? 30)
   const startStr = searchParams.start ?? dateStr(days)
   const endStr   = searchParams.end   ?? dateStr(1)
-
   const isCustomRange = !!(searchParams.start && searchParams.end)
+
+  // Period comparison halves
+  const startMs         = new Date(startStr + 'T00:00:00Z').getTime()
+  const endMs           = new Date(endStr   + 'T00:00:00Z').getTime()
+  const midMs           = Math.floor((startMs + endMs) / 2)
+  const firstHalfEnd    = new Date(midMs).toISOString().split('T')[0]
+  const secondHalfStart = new Date(midMs + 86400000).toISOString().split('T')[0]
+  const showComparison  = secondHalfStart <= endStr && firstHalfEnd !== endStr
 
   // ── No profile connected ────────────────────────────────────────────────
   if (!profileId) {
@@ -72,43 +99,24 @@ export default async function DashboardPage({
     )
   }
 
-  // ── Fetch data ──────────────────────────────────────────────────────────
-  const [metricsRes, syncRes, alertsRes] = await Promise.all([
-    supabase.rpc('get_overview_metrics', {
-      p_profile_id: profileId,
-      p_start:      startStr,
-      p_end:        endStr,
-    }),
-    supabase
-      .from('sync_logs')
-      .select('id, status, started_at, completed_at, error_message, records_upserted')
-      .eq('profile_id', profileId)
-      .order('started_at', { ascending: false })
-      .limit(4),
-    supabase
-      .from('alerts')
-      .select('id, alert_type, severity, entity_name, message, triggered_at')
-      .eq('profile_id', profileId)
-      .is('dismissed_at', null)
-      .order('triggered_at', { ascending: false })
-      .limit(5),
+  // ── Fetch all data in parallel ──────────────────────────────────────────
+  const fhPromise = showComparison
+    ? supabase.rpc('get_overview_metrics', { p_profile_id: profileId, p_start: startStr, p_end: firstHalfEnd })
+    : Promise.resolve({ data: null } as any)
+  const shPromise = showComparison
+    ? supabase.rpc('get_overview_metrics', { p_profile_id: profileId, p_start: secondHalfStart, p_end: endStr })
+    : Promise.resolve({ data: null } as any)
+
+  const [metricsRes, alertsRes, spRes, sbRes, fhRes, shRes] = await Promise.all([
+    supabase.rpc('get_overview_metrics', { p_profile_id: profileId, p_start: startStr, p_end: endStr }),
+    supabase.from('alerts').select('id, alert_type, severity, entity_name, message, triggered_at').eq('profile_id', profileId).is('dismissed_at', null).order('triggered_at', { ascending: false }).limit(5),
+    supabase.from('sp_campaigns').select('campaign_id, campaign_name, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
+    supabase.from('sb_campaigns').select('campaign_id, campaign_name, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
+    fhPromise,
+    shPromise,
   ])
 
-  // Build a single sync log: sum records from the same sync session (batches within 5 min of latest)
-  const syncLogs = syncRes.data ?? []
-  const latestLog = syncLogs[0] ?? null
-  const sessionCutoff = latestLog?.started_at
-    ? new Date(new Date(latestLog.started_at).getTime() - 5 * 60 * 1000)
-    : null
-  const sessionRecords = sessionCutoff
-    ? syncLogs
-        .filter(l => l.status === 'success' && l.started_at && new Date(l.started_at) >= sessionCutoff)
-        .reduce((s, l) => s + (l.records_upserted ?? 0), 0)
-    : 0
-  const syncForDisplay = latestLog
-    ? { ...latestLog, records_upserted: sessionRecords || latestLog.records_upserted }
-    : null
-
+  // ── Main totals ─────────────────────────────────────────────────────────
   const m = metricsRes.data?.[0]
   const totals = {
     spend:       Number(m?.spend_cents  ?? 0),
@@ -117,18 +125,57 @@ export default async function DashboardPage({
     impressions: Number(m?.impressions  ?? 0),
     clicks:      Number(m?.clicks       ?? 0),
   }
-
-  const acos  = totals.sales > 0  ? (totals.spend / totals.sales * 100).toFixed(1) + '%' : '—'
-  const roas  = totals.spend > 0  ? (totals.sales / totals.spend).toFixed(2) + 'x'       : '—'
-  const cpc   = totals.clicks > 0 ? '$' + (totals.spend / totals.clicks / 100).toFixed(2) : '—'
-
+  const acos = totals.sales > 0  ? (totals.spend / totals.sales * 100).toFixed(1) + '%' : '—'
+  const roas = totals.spend > 0  ? (totals.sales / totals.spend).toFixed(2) + 'x'       : '—'
+  const cpc  = totals.clicks > 0 ? '$' + (totals.spend / totals.clicks / 100).toFixed(2) : '—'
   const acosHighlight = totals.sales > 0
     ? totals.spend / totals.sales > 0.5 ? 'red' as const
     : totals.spend / totals.sales < 0.25 ? 'green' as const
     : 'default' as const
     : 'default' as const
 
+  // ── SP / SB breakdown ───────────────────────────────────────────────────
+  const sp = agg(spRes.data ?? [])
+  const sb = agg(sbRes.data ?? [])
+
+  // ── Period comparison ───────────────────────────────────────────────────
+  const p1m = (fhRes as any)?.data?.[0]
+  const p2m = (shRes as any)?.data?.[0]
+  const p1 = p1m ? { spend: Number(p1m.spend_cents ?? 0), sales: Number(p1m.sales_cents ?? 0), orders: Number(p1m.orders ?? 0) } : null
+  const p2 = p2m ? { spend: Number(p2m.spend_cents ?? 0), sales: Number(p2m.sales_cents ?? 0), orders: Number(p2m.orders ?? 0) } : null
+
+  // ── Orders by campaign ──────────────────────────────────────────────────
+  type CampEntry = { name: string; type: string; spend: number; sales: number; orders: number }
+  const campMap = new Map<string, CampEntry>()
+  for (const r of spRes.data ?? []) {
+    const key = `SP-${r.campaign_id}`
+    if (!campMap.has(key)) campMap.set(key, { name: r.campaign_name, type: 'SP', spend: 0, sales: 0, orders: 0 })
+    const c = campMap.get(key)!; c.spend += r.spend_cents; c.sales += r.sales_cents; c.orders += r.orders ?? 0
+  }
+  for (const r of sbRes.data ?? []) {
+    const key = `SB-${r.campaign_id}`
+    if (!campMap.has(key)) campMap.set(key, { name: r.campaign_name, type: 'SB', spend: 0, sales: 0, orders: 0 })
+    const c = campMap.get(key)!; c.spend += r.spend_cents; c.sales += r.sales_cents; c.orders += r.orders ?? 0
+  }
+  const allCamps = Array.from(campMap.values())
+  const totalCampOrders = allCamps.reduce((s, c) => s + c.orders, 0)
+  const topCamps = allCamps.filter(c => c.orders > 0).sort((a, b) => b.orders - a.orders).slice(0, 10)
+
   const dayOptions = [7, 14, 30, 60]
+
+  // ── Change indicator helper ─────────────────────────────────────────────
+  function chg(from: number, to: number, higherIsBetter: boolean) {
+    if (from === 0) return null
+    const pct = (to - from) / from * 100
+    const good = higherIsBetter ? pct > 0 : pct < 0
+    const bad  = higherIsBetter ? pct < 0 : pct > 0
+    return { pct, cls: good ? 'text-emerald-600' : bad ? 'text-red-500' : 'text-gray-400', arrow: pct >= 0 ? '↑' : '↓' }
+  }
+
+  const typeColors: Record<string, string> = {
+    SP: 'bg-blue-50 text-blue-600',
+    SB: 'bg-purple-50 text-purple-600',
+  }
 
   return (
     <div className="space-y-7">
@@ -139,9 +186,7 @@ export default async function DashboardPage({
           <div>
             <h1 className="text-xl font-bold text-gray-900">Overview</h1>
             <p className="text-sm text-gray-400 mt-0.5">
-              {isCustomRange
-                ? `${startStr} — ${endStr}`
-                : `Last ${days} days`}
+              {isCustomRange ? `${startStr} — ${endStr}` : `Last ${days} days`}
             </p>
           </div>
           {profiles && profiles.length > 0 && (
@@ -150,7 +195,6 @@ export default async function DashboardPage({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Quick day buttons */}
           <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
             {dayOptions.map(d => (
               <Link
@@ -166,8 +210,6 @@ export default async function DashboardPage({
               </Link>
             ))}
           </div>
-
-          {/* Custom date range */}
           <DateRangePicker start={startStr} end={endStr} />
         </div>
       </div>
@@ -185,20 +227,147 @@ export default async function DashboardPage({
         Includes SP + SB. Small variance vs Amazon Ads is normal — attribution data updates over 48–72h.
       </p>
 
-      {/* ── Secondary row: Alerts + Sync ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2">
-          <AlertsPanel alerts={alertsRes.data ?? []} />
+      {/* ── Campaign Performance Breakdown ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
+        <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-900">Campaign Performance Breakdown</h2>
+          <span className="text-xs text-gray-400">{fmtDate(startStr)} – {fmtDate(endStr)}</span>
         </div>
-        <SyncStatus sync={syncForDisplay} profileId={profileId} />
+        <div className="p-5 grid grid-cols-2 divide-x divide-gray-50">
+          {([
+            { label: 'Sponsored Products (SP)', dot: 'bg-blue-500',   data: sp },
+            { label: 'Sponsored Brands (SB)',   dot: 'bg-purple-500', data: sb },
+          ] as const).map(({ label, dot, data }) => (
+            <div key={label} className="first:pr-6 last:pl-6">
+              <div className="flex items-center gap-1.5 mb-3.5">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+                <span className="text-xs font-semibold text-gray-700">{label}</span>
+              </div>
+              {[
+                { l: 'Spend',     v: fmt$(data.spend) },
+                { l: 'Sales',     v: fmt$(data.sales) },
+                { l: 'Orders',    v: data.orders.toLocaleString() },
+                { l: 'ACoS',      v: data.acos },
+                { l: 'ROAS',      v: data.roas },
+                { l: 'Campaigns', v: data.campaigns.toString() },
+              ].map(row => (
+                <div key={row.l} className="flex justify-between py-2 border-b border-gray-50 last:border-0">
+                  <span className="text-xs text-gray-400">{row.l}</span>
+                  <span className="text-xs font-medium text-gray-900">{row.v}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
 
+      {/* ── Period Comparison ── */}
+      {showComparison && p1 && p2 && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50">
+            <h2 className="text-sm font-semibold text-gray-900">Period Comparison</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {fmtDate(startStr)} – {fmtDate(firstHalfEnd)} &nbsp;vs&nbsp; {fmtDate(secondHalfStart)} – {fmtDate(endStr)}
+            </p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-50 bg-gray-50/50">
+                <th className="text-left px-5 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Metric</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">{fmtDate(startStr)} – {fmtDate(firstHalfEnd)}</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">{fmtDate(secondHalfStart)} – {fmtDate(endStr)}</th>
+                <th className="text-right px-5 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { l: 'Spend',  v1: fmt$(p1.spend),  v2: fmt$(p2.spend),  c: chg(p1.spend, p2.spend, false) },
+                { l: 'Sales',  v1: fmt$(p1.sales),  v2: fmt$(p2.sales),  c: chg(p1.sales, p2.sales, true)  },
+                { l: 'Orders', v1: p1.orders.toLocaleString(), v2: p2.orders.toLocaleString(), c: chg(p1.orders, p2.orders, true) },
+                {
+                  l: 'ACoS',
+                  v1: p1.sales > 0 ? (p1.spend / p1.sales * 100).toFixed(1) + '%' : '—',
+                  v2: p2.sales > 0 ? (p2.spend / p2.sales * 100).toFixed(1) + '%' : '—',
+                  c:  chg(p1.sales > 0 ? p1.spend / p1.sales : 0, p2.sales > 0 ? p2.spend / p2.sales : 0, false),
+                },
+              ].map(row => (
+                <tr key={row.l} className="border-b border-gray-50 last:border-0">
+                  <td className="px-5 py-3 text-xs font-medium text-gray-500">{row.l}</td>
+                  <td className="px-4 py-3 text-right text-xs text-gray-500 tabular-nums">{row.v1}</td>
+                  <td className="px-4 py-3 text-right text-xs font-semibold text-gray-900 tabular-nums">{row.v2}</td>
+                  <td className="px-5 py-3 text-right text-xs tabular-nums">
+                    {row.c
+                      ? <span className={row.c.cls}>{row.c.arrow} {Math.abs(row.c.pct).toFixed(0)}%</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Orders by Campaign ── */}
+      {topCamps.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-50 flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-900">Orders by Campaign</h2>
+            <span className="text-xs text-gray-400">sorted by orders</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-50">
+                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Campaign</th>
+                  <th className="text-center px-3 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Type</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Orders</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sales</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Spend</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">ACoS</th>
+                  <th className="text-right px-5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Share</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topCamps.map((c, i) => {
+                  const campAcos = c.sales > 0 ? (c.spend / c.sales * 100).toFixed(1) + '%' : '—'
+                  const share = totalCampOrders > 0 ? Math.round(c.orders / totalCampOrders * 100) : 0
+                  return (
+                    <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
+                      <td className="px-5 py-3 text-xs font-medium text-gray-900 max-w-[220px] truncate" title={c.name}>{c.name}</td>
+                      <td className="px-3 py-3 text-center">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${typeColors[c.type] ?? ''}`}>{c.type}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900 tabular-nums">{c.orders}</td>
+                      <td className="px-4 py-3 text-right text-xs text-gray-600 tabular-nums">{fmt$(c.sales)}</td>
+                      <td className="px-4 py-3 text-right text-xs text-gray-600 tabular-nums">{fmt$(c.spend)}</td>
+                      <td className="px-4 py-3 text-right text-xs text-gray-500 tabular-nums">{campAcos}</td>
+                      <td className="px-5 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-12 bg-gray-100 rounded-full h-1.5 hidden sm:block">
+                            <div className="bg-orange-400 h-1.5 rounded-full" style={{ width: `${share}%` }} />
+                          </div>
+                          <span className="text-xs text-gray-500 tabular-nums">{share}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Alerts ── */}
+      <AlertsPanel alerts={alertsRes.data ?? []} />
+
       {/* ── Quick links ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { href: `/dashboard/campaigns?profile_id=${profileId}&days=${days}`,    title: 'Campaign Table',      desc: 'Full metrics for every campaign',         icon: '◈' },
-          { href: `/dashboard/search-terms?profile_id=${profileId}&mode=wasted`,  title: 'Wasted Spend',         desc: 'Search terms burning budget with no sales', icon: '💸' },
-          { href: `/dashboard/search-terms?profile_id=${profileId}&mode=converters`, title: 'Harvest to Exact', desc: 'Converting terms ready to promote',         icon: '🌟' },
+          { href: `/dashboard/campaigns?profile_id=${profileId}&days=${days}`,       title: 'Campaign Table',  desc: 'Full metrics for every campaign',         icon: '◈' },
+          { href: `/dashboard/search-terms?profile_id=${profileId}&mode=wasted`,     title: 'Wasted Spend',    desc: 'Search terms burning budget with no sales', icon: '💸' },
+          { href: `/dashboard/search-terms?profile_id=${profileId}&mode=converters`, title: 'Harvest to Exact',desc: 'Converting terms ready to promote',         icon: '🌟' },
+          { href: `/dashboard/data-sync?profile_id=${profileId}`,                    title: 'Data Sync',       desc: 'Sync Amazon data and view history',         icon: '↺' },
         ].map(card => (
           <Link
             key={card.href}

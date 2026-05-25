@@ -95,8 +95,9 @@ export default async function ComparisonPage({
       const b = bMap.get(id)
       camps.push({
         id, name: b?.name ?? a?.name ?? '', type,
-        state:  b?.state  ?? a?.state  ?? 'enabled',
-        budget: b?.budget ?? a?.budget ?? 0,
+        state:   b?.state  ?? a?.state  ?? 'enabled',
+        aBudget: a?.budget ?? 0,
+        bBudget: b?.budget ?? 0,
         aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aImp: a?.imp ?? 0, aClicks: a?.clicks ?? 0,
         bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bImp: b?.imp ?? 0, bClicks: b?.clicks ?? 0,
       })

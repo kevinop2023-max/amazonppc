@@ -5,6 +5,7 @@ import ProfileSelector from '@/components/ProfileSelector'
 import DateRangePicker from '@/components/DateRangePicker'
 import PeriodComparisonCharts from '@/components/PeriodComparisonCharts'
 import type { PeriodData } from '@/components/PeriodComparisonCharts'
+import KpiComparisonTable from '@/components/KpiComparisonTable'
 import Link from 'next/link'
 
 export const revalidate = 0
@@ -288,6 +289,24 @@ export default async function DashboardPage({
           labelB={`${fmtDate(secondHalfStart)} – ${fmtDate(endStr)}`}
           A={chartA}
           B={chartB}
+        />
+      )}
+
+      {/* ── KPI Comparison Table ── */}
+      {showComparison && p1 && p2 && (
+        <KpiComparisonTable
+          fullLabel={`${fmtDate(startStr)} – ${fmtDate(endStr)}`}
+          labelA={`${fmtDate(startStr)} – ${fmtDate(firstHalfEnd)}`}
+          labelB={`${fmtDate(secondHalfStart)} – ${fmtDate(endStr)}`}
+          full={{ spend: totals.spend, sales: totals.sales, orders: totals.orders }}
+          sp={{ spend: sp.spend, sales: sp.sales }}
+          sb={{ spend: sb.spend, sales: sb.sales }}
+          A={{ spend: p1.spend, sales: p1.sales, orders: p1.orders }}
+          spA={{ spend: spA.spend, sales: spA.sales }}
+          sbA={{ spend: sbA.spend, sales: sbA.sales }}
+          B={{ spend: p2.spend, sales: p2.sales, orders: p2.orders }}
+          spB={{ spend: spB.spend, sales: spB.sales }}
+          sbB={{ spend: sbB.spend, sales: sbB.sales }}
         />
       )}
 

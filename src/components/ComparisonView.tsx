@@ -451,9 +451,17 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
     return Array.from(map.entries()).map(([term, m]) => ({ term, ...m }))
   }, [terms])
 
-  const harvest = useMemo(() => global.filter(t => t.bOrders > 0).sort((a, b) => b.bOrders - a.bOrders), [global])
-  const wasted  = useMemo(() => global.filter(t => t.bSpend > 300 && t.bOrders === 0).sort((a, b) => b.bSpend - a.bSpend), [global])
-  const all     = useMemo(() => [...global].sort((a, b) => b.bSpend - a.bSpend), [global])
+  // Sort by campaign name first, then by metric within group
+  function byCampThenMetric(arr: typeof global, metric: (t: typeof global[0]) => number) {
+    return [...arr].sort((a, b) => {
+      const c = a.bestCampName.localeCompare(b.bestCampName)
+      return c !== 0 ? c : metric(b) - metric(a)
+    })
+  }
+
+  const harvest = useMemo(() => byCampThenMetric(global.filter(t => t.bOrders > 0), t => t.bOrders), [global])
+  const wasted  = useMemo(() => byCampThenMetric(global.filter(t => t.bSpend > 300 && t.bOrders === 0), t => t.bSpend), [global])
+  const all     = useMemo(() => byCampThenMetric(global, t => t.bSpend), [global])
 
   const rows = subTab === 'harvest' ? harvest : subTab === 'wasted' ? wasted : all
 
@@ -488,10 +496,11 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50/60 border-b border-gray-100">
-                <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Search Term</th>
-                <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Campaign</th>
+                <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Campaign</th>
+                <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Search Term</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Sales</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Clicks</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Spend</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Orders</th>
@@ -507,11 +516,12 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={15} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
+                <tr><td colSpan={16} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
               ) : rows.map((t, i) => {
                 const tAa = acosPct(t.aSpend, t.aSales)
                 const tBa = acosPct(t.bSpend, t.bSales)
                 const acosDelta = tAa !== null && tBa !== null ? tBa - tAa : null
+                const isFirstInGroup = i === 0 || rows[i - 1].bestCampName !== t.bestCampName
 
                 // Status
                 const isHarvest = t.bOrders > 0
@@ -534,11 +544,14 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
                   : 'bg-amber-50 text-amber-700 border border-amber-200'
 
                 return (
-                  <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40 transition-colors">
-                    <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[180px] truncate">{t.term}</td>
-                    <td className="px-3 py-2.5 text-gray-500 max-w-[150px] truncate text-[11px]">{t.bestCampName || '—'}</td>
+                  <tr key={i} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/40 transition-colors ${isFirstInGroup && i > 0 ? 'border-t border-gray-200' : ''}`}>
+                    <td className="px-4 py-2.5 text-gray-700 max-w-[160px] truncate text-[11px] font-medium align-top pt-3">
+                      {isFirstInGroup ? (t.bestCampName || '—') : ''}
+                    </td>
+                    <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[180px] truncate">{t.term}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aOrders || '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{tAa !== null ? tAa.toFixed(1) + '%' : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aSales > 0 ? fmtD(t.aSales) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aClicks || '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aSpend > 0 ? fmtD(t.aSpend) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{t.bOrders || '—'}</td>

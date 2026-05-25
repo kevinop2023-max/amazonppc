@@ -100,7 +100,15 @@ export default async function CampaignsPage({
   const totalOrders = campaigns.reduce((s, c) => s + c.orders, 0)
 
   const buildUrl = (params: Record<string, string | undefined>) => {
-    const base: Record<string, string | undefined> = { profile_id: String(profileId), type, state, ...params }
+    const base: Record<string, string | undefined> = {
+      profile_id: String(profileId),
+      type,
+      state,
+      start: searchParams.start,
+      end: searchParams.end,
+      days: String(days),
+      ...params,
+    }
     const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('&')
     return `/dashboard/campaigns?${qs}`
   }
@@ -120,7 +128,7 @@ export default async function CampaignsPage({
           {/* Type filter */}
           <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
             {[['', 'All'], ['SP', 'SP'], ['SB', 'SB'], ['SD', 'SD']].map(([t, label]) => (
-              <Link key={t} href={buildUrl({ type: t || undefined, days: String(days) })}
+              <Link key={t} href={buildUrl({ type: t || undefined })}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
                   (type ?? '') === t ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800'
                 }`}

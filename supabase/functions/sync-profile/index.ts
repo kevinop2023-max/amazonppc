@@ -121,11 +121,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Amazon max per request = 31 days. Split 60d into two 30d batches. v2
-    const batches = [
-      { startDate: dateStr(60), endDate: dateStr(31) },
-      { startDate: dateStr(30), endDate: dateStr(1)  },
-    ]
+    // Manual sync: 60 days (2 batches). Auto/scheduled: 30 days (1 batch) to avoid pg_cron timeout.
+    const isManual = triggered_by === 'manual'
+    const batches = isManual
+      ? [
+          { startDate: dateStr(60), endDate: dateStr(31) },
+          { startDate: dateStr(30), endDate: dateStr(1)  },
+        ]
+      : [{ startDate: dateStr(30), endDate: dateStr(1) }]
 
     // Load profile + refresh token if needed
     const { data: profile, error: pErr } = await db.from('amazon_profiles')

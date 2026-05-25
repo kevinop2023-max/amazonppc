@@ -3,6 +3,8 @@ import MetricCard from '@/components/MetricCard'
 import AlertsPanel from '@/components/AlertsPanel'
 import ProfileSelector from '@/components/ProfileSelector'
 import DateRangePicker from '@/components/DateRangePicker'
+import PeriodComparisonCharts from '@/components/PeriodComparisonCharts'
+import type { PeriodData } from '@/components/PeriodComparisonCharts'
 import Link from 'next/link'
 
 export const revalidate = 0
@@ -19,7 +21,7 @@ function fmtDate(s: string) {
   return new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-type CampRow = { campaign_id: number; campaign_name: string; spend_cents: number; sales_cents: number; orders: number }
+type CampRow = { date: string; campaign_id: number; campaign_name: string; spend_cents: number; sales_cents: number; orders: number }
 
 function agg(rows: CampRow[]) {
   const ids = new Set<number>()
@@ -110,8 +112,8 @@ export default async function DashboardPage({
   const [metricsRes, alertsRes, spRes, sbRes, fhRes, shRes] = await Promise.all([
     supabase.rpc('get_overview_metrics', { p_profile_id: profileId, p_start: startStr, p_end: endStr }),
     supabase.from('alerts').select('id, alert_type, severity, entity_name, message, triggered_at').eq('profile_id', profileId).is('dismissed_at', null).order('triggered_at', { ascending: false }).limit(5),
-    supabase.from('sp_campaigns').select('campaign_id, campaign_name, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
-    supabase.from('sb_campaigns').select('campaign_id, campaign_name, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
+    supabase.from('sp_campaigns').select('date, campaign_id, campaign_name, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
+    supabase.from('sb_campaigns').select('date, campaign_id, campaign_name, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
     fhPromise,
     shPromise,
   ])
@@ -134,15 +136,42 @@ export default async function DashboardPage({
     : 'default' as const
     : 'default' as const
 
-  // ── SP / SB breakdown ───────────────────────────────────────────────────
-  const sp = agg(spRes.data ?? [])
-  const sb = agg(sbRes.data ?? [])
+  // ── SP / SB breakdown (full period) ────────────────────────────────────
+  const spRows = spRes.data ?? []
+  const sbRows = sbRes.data ?? []
+  const sp = agg(spRows)
+  const sb = agg(sbRows)
 
   // ── Period comparison ───────────────────────────────────────────────────
   const p1m = (fhRes as any)?.data?.[0]
   const p2m = (shRes as any)?.data?.[0]
   const p1 = p1m ? { spend: Number(p1m.spend_cents ?? 0), sales: Number(p1m.sales_cents ?? 0), orders: Number(p1m.orders ?? 0) } : null
   const p2 = p2m ? { spend: Number(p2m.spend_cents ?? 0), sales: Number(p2m.sales_cents ?? 0), orders: Number(p2m.orders ?? 0) } : null
+
+  // Per-half SP/SB for chart
+  const spA = agg(spRows.filter(r => r.date <= firstHalfEnd))
+  const sbA = agg(sbRows.filter(r => r.date <= firstHalfEnd))
+  const spB = agg(spRows.filter(r => r.date >= secondHalfStart))
+  const sbB = agg(sbRows.filter(r => r.date >= secondHalfStart))
+
+  const chartA: PeriodData = {
+    spend:   p1?.spend   ?? 0,
+    sales:   p1?.sales   ?? 0,
+    orders:  p1?.orders  ?? 0,
+    spSales: spA.sales,
+    sbSales: sbA.sales,
+    spSpend: spA.spend,
+    sbSpend: sbA.spend,
+  }
+  const chartB: PeriodData = {
+    spend:   p2?.spend   ?? 0,
+    sales:   p2?.sales   ?? 0,
+    orders:  p2?.orders  ?? 0,
+    spSales: spB.sales,
+    sbSales: sbB.sales,
+    spSpend: spB.spend,
+    sbSpend: sbB.spend,
+  }
 
   // ── Orders by campaign ──────────────────────────────────────────────────
   type CampEntry = { name: string; type: string; spend: number; sales: number; orders: number }
@@ -162,15 +191,6 @@ export default async function DashboardPage({
   const topCamps = allCamps.filter(c => c.orders > 0).sort((a, b) => b.orders - a.orders).slice(0, 10)
 
   const dayOptions = [7, 14, 30, 60]
-
-  // ── Change indicator helper ─────────────────────────────────────────────
-  function chg(from: number, to: number, higherIsBetter: boolean) {
-    if (from === 0) return null
-    const pct = (to - from) / from * 100
-    const good = higherIsBetter ? pct > 0 : pct < 0
-    const bad  = higherIsBetter ? pct < 0 : pct > 0
-    return { pct, cls: good ? 'text-emerald-600' : bad ? 'text-red-500' : 'text-gray-400', arrow: pct >= 0 ? '↑' : '↓' }
-  }
 
   const typeColors: Record<string, string> = {
     SP: 'bg-blue-50 text-blue-600',
@@ -261,50 +281,14 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      {/* ── Period Comparison ── */}
+      {/* ── Period Comparison Charts ── */}
       {showComparison && p1 && p2 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-50">
-            <h2 className="text-sm font-semibold text-gray-900">Period Comparison</h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {fmtDate(startStr)} – {fmtDate(firstHalfEnd)} &nbsp;vs&nbsp; {fmtDate(secondHalfStart)} – {fmtDate(endStr)}
-            </p>
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-50 bg-gray-50/50">
-                <th className="text-left px-5 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Metric</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">{fmtDate(startStr)} – {fmtDate(firstHalfEnd)}</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">{fmtDate(secondHalfStart)} – {fmtDate(endStr)}</th>
-                <th className="text-right px-5 py-2.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Change</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                { l: 'Spend',  v1: fmt$(p1.spend),  v2: fmt$(p2.spend),  c: chg(p1.spend, p2.spend, false) },
-                { l: 'Sales',  v1: fmt$(p1.sales),  v2: fmt$(p2.sales),  c: chg(p1.sales, p2.sales, true)  },
-                { l: 'Orders', v1: p1.orders.toLocaleString(), v2: p2.orders.toLocaleString(), c: chg(p1.orders, p2.orders, true) },
-                {
-                  l: 'ACoS',
-                  v1: p1.sales > 0 ? (p1.spend / p1.sales * 100).toFixed(1) + '%' : '—',
-                  v2: p2.sales > 0 ? (p2.spend / p2.sales * 100).toFixed(1) + '%' : '—',
-                  c:  chg(p1.sales > 0 ? p1.spend / p1.sales : 0, p2.sales > 0 ? p2.spend / p2.sales : 0, false),
-                },
-              ].map(row => (
-                <tr key={row.l} className="border-b border-gray-50 last:border-0">
-                  <td className="px-5 py-3 text-xs font-medium text-gray-500">{row.l}</td>
-                  <td className="px-4 py-3 text-right text-xs text-gray-500 tabular-nums">{row.v1}</td>
-                  <td className="px-4 py-3 text-right text-xs font-semibold text-gray-900 tabular-nums">{row.v2}</td>
-                  <td className="px-5 py-3 text-right text-xs tabular-nums">
-                    {row.c
-                      ? <span className={row.c.cls}>{row.c.arrow} {Math.abs(row.c.pct).toFixed(0)}%</span>
-                      : <span className="text-gray-300">—</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <PeriodComparisonCharts
+          labelA={`${fmtDate(startStr)} – ${fmtDate(firstHalfEnd)}`}
+          labelB={`${fmtDate(secondHalfStart)} – ${fmtDate(endStr)}`}
+          A={chartA}
+          B={chartB}
+        />
       )}
 
       {/* ── Orders by Campaign ── */}

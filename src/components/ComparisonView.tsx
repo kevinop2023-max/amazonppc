@@ -454,17 +454,17 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
   // Aggregate terms cross-campaign; track campaign with highest B spend per term
   const global = useMemo(() => {
     const map = new Map<string, {
-      aSpend: number; aSales: number; aOrders: number; aClicks: number
-      bSpend: number; bSales: number; bOrders: number; bClicks: number
+      aSpend: number; aSales: number; aOrders: number; aClicks: number; aImp: number
+      bSpend: number; bSales: number; bOrders: number; bClicks: number; bImp: number
       bestCampName: string; bestCampBSpend: number
     }>()
     for (const t of terms) {
       if (!map.has(t.term)) {
-        map.set(t.term, { aSpend: 0, aSales: 0, aOrders: 0, aClicks: 0, bSpend: 0, bSales: 0, bOrders: 0, bClicks: 0, bestCampName: t.campaignName, bestCampBSpend: 0 })
+        map.set(t.term, { aSpend: 0, aSales: 0, aOrders: 0, aClicks: 0, aImp: 0, bSpend: 0, bSales: 0, bOrders: 0, bClicks: 0, bImp: 0, bestCampName: t.campaignName, bestCampBSpend: 0 })
       }
       const m = map.get(t.term)!
-      m.aSpend += t.aSpend; m.aSales += t.aSales; m.aOrders += t.aOrders; m.aClicks += t.aClicks
-      m.bSpend += t.bSpend; m.bSales += t.bSales; m.bOrders += t.bOrders; m.bClicks += t.bClicks
+      m.aSpend += t.aSpend; m.aSales += t.aSales; m.aOrders += t.aOrders; m.aClicks += t.aClicks; m.aImp += t.aImp
+      m.bSpend += t.bSpend; m.bSales += t.bSales; m.bOrders += t.bOrders; m.bClicks += t.bClicks; m.bImp += t.bImp
       if (t.bSpend > m.bestCampBSpend) { m.bestCampName = t.campaignName; m.bestCampBSpend = t.bSpend }
     }
     return Array.from(map.entries()).map(([term, m]) => ({ term, ...m }))

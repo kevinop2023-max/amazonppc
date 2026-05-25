@@ -185,6 +185,19 @@ Deno.serve(async (req) => {
         createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate),
         createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate),
       ])
+
+      // Insert log entry immediately after SP — visible in sync history within seconds.
+      // SB/SD report IDs will be patched in below once they're submitted.
+      const { data: log } = await db.from('sync_logs').insert({
+        profile_id, triggered_by,
+        status: 'reports_pending',
+        started_at: new Date().toISOString(),
+        date_range_start: startDate,
+        date_range_end: endDate,
+        report_ids: { spCamp, spKw, spSt, startDate, endDate },
+      }).select('id').single()
+      if (log?.id) logIds.push(log.id)
+
       // Wait between SP and SB — SB has a tighter rate limit than SP
       await new Promise(r => setTimeout(r, 15000))
       console.log(`[sync] Creating SB reports for ${startDate} → ${endDate}...`)
@@ -202,16 +215,13 @@ Deno.serve(async (req) => {
       const [sdCamp] = await Promise.all([
         createReport(token, pid, 'SD Campaigns', 'SPONSORED_DISPLAY', 'sdCampaigns', ['campaign'], SD_CAMP, startDate, endDate),
       ])
-      const reportIds = { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, sdCamp, startDate, endDate }
-      const { data: log } = await db.from('sync_logs').insert({
-        profile_id, triggered_by,
-        status: 'reports_pending',
-        started_at: new Date().toISOString(),
-        date_range_start: startDate,
-        date_range_end: endDate,
-        report_ids: reportIds,
-      }).select('id').single()
-      if (log?.id) logIds.push(log.id)
+
+      // Patch in the SB/SD report IDs now that all submissions are done
+      if (log?.id) {
+        await db.from('sync_logs').update({
+          report_ids: { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, sdCamp, startDate, endDate },
+        }).eq('id', log.id)
+      }
     }
 
     console.log(`[sync] All reports submitted. Log IDs: ${logIds.join(', ')}`)

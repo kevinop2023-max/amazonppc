@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import SyncHistoryRefresh from '@/components/SyncHistoryRefresh'
 
 export const revalidate = 0
 
@@ -48,12 +49,15 @@ export default async function SyncHistoryPage({
           <h1 className="text-xl font-bold text-gray-900">Sync History</h1>
           <p className="text-sm text-gray-400 mt-0.5">Last 50 sync sessions</p>
         </div>
-        <Link
-          href={`/dashboard?profile_id=${profileId}`}
-          className="text-xs font-medium text-gray-500 hover:text-gray-800 transition-colors"
-        >
-          ← Overview
-        </Link>
+        <div className="flex items-center gap-4">
+          <SyncHistoryRefresh />
+          <Link
+            href={`/dashboard?profile_id=${profileId}`}
+            className="text-xs font-medium text-gray-500 hover:text-gray-800 transition-colors"
+          >
+            ← Overview
+          </Link>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">

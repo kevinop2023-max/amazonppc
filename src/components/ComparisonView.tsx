@@ -17,12 +17,19 @@ export type TermComp = {
   bSpend: number; bSales: number; bOrders: number; bClicks: number
 }
 
+export type KwComp = {
+  keywordText: string; matchType: string; campaignId: number; campaignName: string
+  aSpend: number; aSales: number; aOrders: number; aClicks: number
+  bSpend: number; bSales: number; bOrders: number; bClicks: number
+}
+
 interface Props {
   profileId: number
   aStart: string; aEnd: string
   bStart: string; bEnd: string
   camps: CampComp[]
   terms: TermComp[]
+  keywords: KwComp[]
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -124,7 +131,7 @@ function SummaryCard({
 }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
-      <p className="text-xs text-gray-400 font-medium mb-3">{label}</p>
+      <p className="text-sm text-gray-600 font-semibold mb-3">{label}</p>
       <div className="flex items-baseline gap-2 mb-2">
         <span className="text-sm text-gray-400 tabular-nums">{aStr}</span>
         <span className="text-gray-300">→</span>
@@ -491,6 +498,29 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
         ))}
       </div>
 
+      {/* Summary stats strip */}
+      {rows.length > 0 && (() => {
+        const totBSpend = rows.reduce((s, t) => s + t.bSpend, 0)
+        const totBSales = rows.reduce((s, t) => s + t.bSales, 0)
+        const totBOrders = rows.reduce((s, t) => s + t.bOrders, 0)
+        const totASpend = rows.reduce((s, t) => s + t.aSpend, 0)
+        return (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 bg-gray-50 rounded-xl px-4 py-2.5 border border-gray-100">
+            <span><strong className="text-gray-700">{rows.length}</strong> terms</span>
+            <span className="text-gray-300">|</span>
+            <span>B Spend: <strong className="text-purple-600">{fmtD(totBSpend)}</strong></span>
+            <span className="text-gray-300">|</span>
+            <span>B Sales: <strong className="text-purple-600">{fmtD(totBSales)}</strong></span>
+            <span className="text-gray-300">|</span>
+            <span>B Orders: <strong className="text-purple-600">{totBOrders}</strong></span>
+            {subTab === 'wasted' && (<>
+              <span className="text-gray-300">|</span>
+              <span>A Spend on wasted: <strong className="text-amber-600">{fmtD(totASpend)}</strong></span>
+            </>)}
+          </div>
+        )
+      })()}
+
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -586,11 +616,183 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
   )
 }
 
+// ── Keywords tab ──────────────────────────────────────────────────────────────
+
+const MATCH_ORDER: Record<string, number> = { exact: 0, phrase: 1, broad: 2 }
+
+function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
+  const [subTab, setSubTab] = useState<'all' | 'harvest' | 'wasted'>('harvest')
+
+  function byCampThenMetric(arr: KwComp[], metric: (k: KwComp) => number) {
+    return [...arr].sort((a, b) => {
+      const c = a.campaignName.localeCompare(b.campaignName)
+      if (c !== 0) return c
+      const m = metric(b) - metric(a)
+      if (m !== 0) return m
+      return (MATCH_ORDER[a.matchType] ?? 9) - (MATCH_ORDER[b.matchType] ?? 9)
+    })
+  }
+
+  const harvest = useMemo(() => byCampThenMetric(keywords.filter(k => k.bOrders > 0), k => k.bOrders), [keywords])
+  const wasted  = useMemo(() => byCampThenMetric(keywords.filter(k => k.bSpend > 300 && k.bOrders === 0), k => k.bSpend), [keywords])
+  const all     = useMemo(() => byCampThenMetric(keywords, k => k.bSpend), [keywords])
+
+  const rows = subTab === 'harvest' ? harvest : subTab === 'wasted' ? wasted : all
+
+  const emptyMsg = subTab === 'harvest'
+    ? 'No converting keywords in period B.'
+    : subTab === 'wasted'
+    ? 'No wasted keywords in period B (min $3 spend, 0 orders).'
+    : 'No keyword data for the selected periods.'
+
+  const MATCH_CLS: Record<string, string> = {
+    exact:  'bg-blue-50 text-blue-600',
+    phrase: 'bg-amber-50 text-amber-600',
+    broad:  'bg-gray-100 text-gray-500',
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        {([
+          ['all',     `All (${all.length})`],
+          ['harvest', `Converting (${harvest.length})`],
+          ['wasted',  `Wasted (${wasted.length})`],
+        ] as [string, string][]).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setSubTab(key as typeof subTab)}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all border ${
+              subTab === key
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+            }`}
+          >{label}</button>
+        ))}
+      </div>
+
+      {rows.length > 0 && (() => {
+        const totBSpend  = rows.reduce((s, k) => s + k.bSpend,  0)
+        const totBSales  = rows.reduce((s, k) => s + k.bSales,  0)
+        const totBOrders = rows.reduce((s, k) => s + k.bOrders, 0)
+        const totASpend  = rows.reduce((s, k) => s + k.aSpend,  0)
+        return (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 bg-gray-50 rounded-xl px-4 py-2.5 border border-gray-100">
+            <span><strong className="text-gray-700">{rows.length}</strong> keywords</span>
+            <span className="text-gray-300">|</span>
+            <span>B Spend: <strong className="text-purple-600">{fmtD(totBSpend)}</strong></span>
+            <span className="text-gray-300">|</span>
+            <span>B Sales: <strong className="text-purple-600">{fmtD(totBSales)}</strong></span>
+            <span className="text-gray-300">|</span>
+            <span>B Orders: <strong className="text-purple-600">{totBOrders}</strong></span>
+            {subTab === 'wasted' && (<>
+              <span className="text-gray-300">|</span>
+              <span>A Spend on wasted: <strong className="text-amber-600">{fmtD(totASpend)}</strong></span>
+            </>)}
+          </div>
+        )
+      })()}
+
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50/60 border-b border-gray-100">
+                <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Campaign</th>
+                <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Keyword</th>
+                <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Match</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Sales</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Clicks</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Spend</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Orders</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B ACoS</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Sales</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Clicks</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Spend</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Change</th>
+                <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Status</th>
+                <th className="text-right px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={16} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
+              ) : rows.map((k, i) => {
+                const kAa = acosPct(k.aSpend, k.aSales)
+                const kBa = acosPct(k.bSpend, k.bSales)
+                const acosDelta = kAa !== null && kBa !== null ? kBa - kAa : null
+                const isFirstInGroup = i === 0 || rows[i - 1].campaignName !== k.campaignName
+
+                const isConverting = k.bOrders > 0
+                const isWasted     = k.bSpend > 300 && k.bOrders === 0
+                let status = '—'; let statusCls = 'bg-gray-100 text-gray-400'
+                if (isConverting) {
+                  if (k.aOrders > 0) { status = 'Both'; statusCls = 'bg-emerald-100 text-emerald-700' }
+                  else               { status = 'New';  statusCls = 'bg-blue-100 text-blue-700' }
+                } else if (isWasted) {
+                  if (k.aSpend > 0 && k.aOrders === 0) { status = 'Ongoing';   statusCls = 'bg-amber-50 text-amber-700 border border-amber-200' }
+                  else                                   { status = 'New Issue'; statusCls = 'bg-red-50 text-red-600 border border-red-200' }
+                }
+
+                const action = isWasted ? (k.bSpend > 3000 ? 'Neg. Exact' : 'Lower bid') : (isConverting && kBa !== null && kBa < 25 ? 'Scale bid' : '—')
+                const actionCls = isWasted
+                  ? (k.bSpend > 3000 ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200')
+                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+
+                return (
+                  <tr key={i} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/40 transition-colors ${isFirstInGroup && i > 0 ? 'border-t border-gray-200' : ''}`}>
+                    <td className="px-4 py-2.5 text-gray-700 max-w-[160px] truncate text-[11px] font-medium align-top pt-3">
+                      {isFirstInGroup ? (k.campaignName || '—') : ''}
+                    </td>
+                    <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[180px] truncate">{k.keywordText}</td>
+                    <td className="px-3 py-2.5 text-center">
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${MATCH_CLS[k.matchType] ?? 'bg-gray-100 text-gray-500'}`}>
+                        {k.matchType}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aOrders || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{kAa !== null ? kAa.toFixed(1) + '%' : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aSales > 0 ? fmtD(k.aSales) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aClicks || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aSpend > 0 ? fmtD(k.aSpend) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{k.bOrders || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{kBa !== null ? kBa.toFixed(1) + '%' : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{k.bSales > 0 ? fmtD(k.bSales) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{k.bClicks || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{k.bSpend > 0 ? fmtD(k.bSpend) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right">
+                      <DeltaBadge value={acosDelta} unit="pp" lowerIsBetter threshold={1} />
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      {status === '—'
+                        ? <span className="text-[11px] text-gray-300">—</span>
+                        : <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusCls}`}>{status}</span>
+                      }
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {action === '—'
+                        ? <span className="text-[11px] text-gray-300">—</span>
+                        : <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${actionCls}`}>{action}</span>
+                      }
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms }: Props) {
+export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms, keywords }: Props) {
   const router = useRouter()
-  const [tab, setTab] = useState<'overview' | 'campaigns' | 'search-terms'>('campaigns')
+  const [tab, setTab] = useState<'overview' | 'campaigns' | 'search-terms' | 'keywords'>('campaigns')
   const [as, setAs] = useState(aStart); const [ae, setAe] = useState(aEnd)
   const [bs, setBs] = useState(bStart); const [be, setBe] = useState(bEnd)
 
@@ -622,11 +824,13 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
 
   const enabledCount = camps.filter(c => c.state?.toLowerCase() === 'enabled').length
   const termCount    = new Set(terms.map(t => t.term)).size
+  const kwCount      = keywords.length
 
   const tabs = [
     { key: 'overview',      label: 'Overview' },
     { key: 'campaigns',     label: `Campaigns ${enabledCount}` },
     { key: 'search-terms',  label: `Search Terms ${termCount}` },
+    { key: 'keywords',      label: `Keywords ${kwCount}` },
   ]
 
   return (
@@ -794,6 +998,7 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
 
       {tab === 'campaigns' && <CampaignsTab camps={camps} terms={terms} />}
       {tab === 'search-terms' && <SearchTermsTab terms={terms} />}
+      {tab === 'keywords' && <KeywordsTab keywords={keywords} />}
 
     </div>
   )

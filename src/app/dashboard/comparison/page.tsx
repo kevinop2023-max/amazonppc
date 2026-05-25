@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import ComparisonView from '@/components/ComparisonView'
-import type { CampComp, TermComp } from '@/components/ComparisonView'
+import type { CampComp, TermComp, KwComp } from '@/components/ComparisonView'
 
 export const revalidate = 0
 
@@ -38,8 +38,8 @@ export default async function ComparisonPage({
   const bStart = searchParams.bStart ?? dateStr(7)
   const bEnd   = searchParams.bEnd   ?? dateStr(1)
 
-  // 6 parallel queries
-  const [spARes, spBRes, sbARes, sbBRes, stARes, stBRes] = await Promise.all([
+  // 10 parallel queries
+  const [spARes, spBRes, sbARes, sbBRes, stARes, stBRes, spKwARes, spKwBRes, sbKwARes, sbKwBRes] = await Promise.all([
     supabase.from('sp_campaigns')
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
@@ -57,6 +57,18 @@ export default async function ComparisonPage({
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sp_search_terms')
       .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks')
+      .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
+    supabase.from('sp_keywords')
+      .select('campaign_id, keyword_text, match_type, spend_cents, sales_cents, orders, clicks')
+      .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
+    supabase.from('sp_keywords')
+      .select('campaign_id, keyword_text, match_type, spend_cents, sales_cents, orders, clicks')
+      .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
+    supabase.from('sb_keywords')
+      .select('campaign_id, keyword_text, match_type, spend_cents, sales_cents, orders, clicks')
+      .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
+    supabase.from('sb_keywords')
+      .select('campaign_id, keyword_text, match_type, spend_cents, sales_cents, orders, clicks')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
   ])
 
@@ -148,6 +160,49 @@ export default async function ComparisonPage({
     })
   }
 
+  // Aggregate keywords by (campaignId, keywordText, matchType)
+  function aggKwMap(rows: any[]) {
+    const map = new Map<string, { campaignId: number; spend: number; sales: number; orders: number; clicks: number }>()
+    for (const r of rows) {
+      const kw  = r.keyword_text ?? ''
+      const mt  = r.match_type   ?? 'broad'
+      const cid = n(r.campaign_id)
+      const key = `${cid}|${mt}|${kw}`
+      if (!map.has(key)) map.set(key, { campaignId: cid, spend: 0, sales: 0, orders: 0, clicks: 0 })
+      const t = map.get(key)!
+      t.spend  += n(r.spend_cents)
+      t.sales  += n(r.sales_cents)
+      t.orders += n(r.orders)
+      t.clicks += n(r.clicks)
+    }
+    return map
+  }
+
+  // Combine SP + SB keyword rows per period before aggregating
+  const kwARows = [...(spKwARes.data ?? []), ...(sbKwARes.data ?? [])]
+  const kwBRows = [...(spKwBRes.data ?? []), ...(sbKwBRes.data ?? [])]
+  const kwAMap  = aggKwMap(kwARows)
+  const kwBMap  = aggKwMap(kwBRows)
+
+  const allKwKeys = new Set([...kwAMap.keys(), ...kwBMap.keys()])
+  const keywords: KwComp[] = []
+  for (const key of allKwKeys) {
+    const parts = key.split('|')
+    const cid   = Number(parts[0])
+    const mt    = parts[1]
+    const kw    = parts.slice(2).join('|')
+    const a     = kwAMap.get(key)
+    const b     = kwBMap.get(key)
+    keywords.push({
+      keywordText:  kw,
+      matchType:    mt,
+      campaignId:   cid,
+      campaignName: campNameMap.get(cid) ?? '',
+      aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aClicks: a?.clicks ?? 0,
+      bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bClicks: b?.clicks ?? 0,
+    })
+  }
+
   return (
     <ComparisonView
       profileId={profileId}
@@ -155,6 +210,7 @@ export default async function ComparisonPage({
       bStart={bStart} bEnd={bEnd}
       camps={camps}
       terms={terms}
+      keywords={keywords}
     />
   )
 }

@@ -13,14 +13,15 @@ export type CampComp = {
 
 export type TermComp = {
   term: string; campaignId: number; campaignName: string
-  aSpend: number; aSales: number; aOrders: number; aClicks: number
-  bSpend: number; bSales: number; bOrders: number; bClicks: number
+  aSpend: number; aSales: number; aOrders: number; aClicks: number; aImp: number
+  bSpend: number; bSales: number; bOrders: number; bClicks: number; bImp: number
 }
 
 export type KwComp = {
   keywordText: string; matchType: string; campaignId: number; campaignName: string
-  aSpend: number; aSales: number; aOrders: number; aClicks: number
-  bSpend: number; bSales: number; bOrders: number; bClicks: number
+  aBid: number; bBid: number
+  aSpend: number; aSales: number; aOrders: number; aClicks: number; aImp: number
+  bSpend: number; bSales: number; bOrders: number; bClicks: number; bImp: number
 }
 
 interface Props {
@@ -293,7 +294,12 @@ function CampExpanded({ camp, terms }: { camp: CampComp; terms: TermComp[] }) {
 
 // ── Campaigns tab ─────────────────────────────────────────────────────────────
 
-function CampaignsTab({ camps, terms }: { camps: CampComp[]; terms: TermComp[] }) {
+function CampaignsTab({ camps, terms, aStart, aEnd, bStart, bEnd }: {
+  camps: CampComp[]; terms: TermComp[]
+  aStart: string; aEnd: string; bStart: string; bEnd: string
+}) {
+  const aDays = Math.round((new Date(aEnd).getTime() - new Date(aStart).getTime()) / 86400000) + 1
+  const bDays = Math.round((new Date(bEnd).getTime() - new Date(bStart).getTime()) / 86400000) + 1
   const [typeFilter, setTypeFilter] = useState<'' | 'SP' | 'SB'>('')
   const [search, setSearch] = useState('')
   const [showPaused, setShowPaused] = useState(false)
@@ -405,14 +411,20 @@ function CampaignsTab({ camps, terms }: { camps: CampComp[]; terms: TermComp[] }
                       <td className="px-3 py-2.5 text-right text-purple-700 font-semibold tabular-nums">{fmtD(c.bSpend)}</td>
                       <td className="px-3 py-2.5 text-right"><SpendDeltaBadge value={spendDelta} /></td>
                       <td className="px-3 py-2.5 text-right tabular-nums">
-                        {c.aBudget > 0
-                          ? <span className="text-[11px] text-blue-600">{fmtD(c.aBudget)}<span className="text-blue-400">/day</span></span>
-                          : <span className="text-[11px] text-gray-300">—</span>}
+                        {c.aBudget > 0 ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-[11px] text-blue-600">{fmtD(c.aBudget)}<span className="text-blue-400">/day</span></span>
+                            <span className="text-[10px] text-gray-400">{fmtD(c.aSpend / aDays)}<span className="text-gray-300">/day avg</span></span>
+                          </div>
+                        ) : <span className="text-[11px] text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums">
-                        {c.bBudget > 0
-                          ? <span className="text-[11px] text-purple-700 font-semibold">{fmtD(c.bBudget)}<span className="text-purple-400 font-normal">/day</span></span>
-                          : <span className="text-[11px] text-gray-300">—</span>}
+                        {c.bBudget > 0 ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-[11px] text-purple-700 font-semibold">{fmtD(c.bBudget)}<span className="text-purple-400 font-normal">/day</span></span>
+                            <span className="text-[10px] text-gray-400">{fmtD(c.bSpend / bDays)}<span className="text-gray-300">/day avg</span></span>
+                          </div>
+                        ) : <span className="text-[11px] text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{fmtD(c.aSales)}</td>
                       <td className="px-3 py-2.5 text-right text-purple-700 tabular-nums">{fmtD(c.bSales)}</td>
@@ -532,11 +544,13 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Sales</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Clicks</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Impr</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Spend</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Orders</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B ACoS</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Sales</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Clicks</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Impr</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Spend</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Change</th>
                 <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Status</th>
@@ -546,7 +560,7 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={16} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
+                <tr><td colSpan={18} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
               ) : rows.map((t, i) => {
                 const tAa = acosPct(t.aSpend, t.aSales)
                 const tBa = acosPct(t.bSpend, t.bSales)
@@ -583,11 +597,13 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{tAa !== null ? tAa.toFixed(1) + '%' : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aSales > 0 ? fmtD(t.aSales) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aClicks || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aImp > 0 ? t.aImp.toLocaleString() : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aSpend > 0 ? fmtD(t.aSpend) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{t.bOrders || '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{tBa !== null ? tBa.toFixed(1) + '%' : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{t.bSales > 0 ? fmtD(t.bSales) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{t.bClicks || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{t.bImp > 0 ? t.bImp.toLocaleString() : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{t.bSpend > 0 ? fmtD(t.bSpend) : '—'}</td>
                     <td className="px-3 py-2.5 text-right">
                       <DeltaBadge value={acosDelta} unit="pp" lowerIsBetter threshold={1} />
@@ -701,15 +717,19 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
                 <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Campaign</th>
                 <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Keyword</th>
                 <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Match</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Bid</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Bid</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Sales</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Clicks</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Impr</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Spend</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Orders</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B ACoS</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Sales</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Clicks</th>
+                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Impr</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Spend</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Change</th>
                 <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Status</th>
@@ -718,7 +738,7 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={16} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
+                <tr><td colSpan={20} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
               ) : rows.map((k, i) => {
                 const kAa = acosPct(k.aSpend, k.aSales)
                 const kBa = acosPct(k.bSpend, k.bSales)
@@ -752,15 +772,19 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
                         {k.matchType}
                       </span>
                     </td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aBid > 0 ? fmtD(k.aBid) : '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{k.bBid > 0 ? fmtD(k.bBid) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aOrders || '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{kAa !== null ? kAa.toFixed(1) + '%' : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aSales > 0 ? fmtD(k.aSales) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aClicks || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aImp > 0 ? k.aImp.toLocaleString() : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aSpend > 0 ? fmtD(k.aSpend) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{k.bOrders || '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{kBa !== null ? kBa.toFixed(1) + '%' : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{k.bSales > 0 ? fmtD(k.bSales) : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{k.bClicks || '—'}</td>
+                    <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{k.bImp > 0 ? k.bImp.toLocaleString() : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{k.bSpend > 0 ? fmtD(k.bSpend) : '—'}</td>
                     <td className="px-3 py-2.5 text-right">
                       <DeltaBadge value={acosDelta} unit="pp" lowerIsBetter threshold={1} />
@@ -996,7 +1020,7 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
         </div>
       )}
 
-      {tab === 'campaigns' && <CampaignsTab camps={camps} terms={terms} />}
+      {tab === 'campaigns' && <CampaignsTab camps={camps} terms={terms} aStart={aStart} aEnd={aEnd} bStart={bStart} bEnd={bEnd} />}
       {tab === 'search-terms' && <SearchTermsTab terms={terms} />}
       {tab === 'keywords' && <KeywordsTab keywords={keywords} />}
 

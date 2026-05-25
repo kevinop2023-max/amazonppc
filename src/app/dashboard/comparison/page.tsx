@@ -53,22 +53,22 @@ export default async function ComparisonPage({
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sp_search_terms')
-      .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks')
+      .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sp_search_terms')
-      .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks')
+      .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sp_keywords')
-      .select('campaign_id, keyword_text, match_type, spend_cents, sales_cents, orders, clicks')
+      .select('campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sp_keywords')
-      .select('campaign_id, keyword_text, match_type, spend_cents, sales_cents, orders, clicks')
+      .select('campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sb_keywords')
-      .select('campaign_id, keyword_text, match_type, spend_cents, sales_cents, orders, clicks')
+      .select('campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sb_keywords')
-      .select('campaign_id, keyword_text, match_type, spend_cents, sales_cents, orders, clicks')
+      .select('campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
   ])
 
@@ -125,17 +125,18 @@ export default async function ComparisonPage({
 
   // Aggregate search terms by (campaignId, term)
   function aggTermMap(rows: any[]) {
-    const map = new Map<string, { campaignId: number; spend: number; sales: number; orders: number; clicks: number }>()
+    const map = new Map<string, { campaignId: number; spend: number; sales: number; orders: number; clicks: number; imp: number }>()
     for (const r of rows) {
       const term = r.customer_search_term ?? ''
       const cid  = n(r.campaign_id)
       const key  = `${cid}|${term}`
-      if (!map.has(key)) map.set(key, { campaignId: cid, spend: 0, sales: 0, orders: 0, clicks: 0 })
+      if (!map.has(key)) map.set(key, { campaignId: cid, spend: 0, sales: 0, orders: 0, clicks: 0, imp: 0 })
       const t = map.get(key)!
       t.spend  += n(r.spend_cents)
       t.sales  += n(r.sales_cents)
       t.orders += n(r.orders)
       t.clicks += n(r.clicks)
+      t.imp    += n(r.impressions)
     }
     return map
   }
@@ -155,25 +156,28 @@ export default async function ComparisonPage({
       term,
       campaignId:   cid,
       campaignName: campNameMap.get(cid) ?? '',
-      aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aClicks: a?.clicks ?? 0,
-      bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bClicks: b?.clicks ?? 0,
+      aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aClicks: a?.clicks ?? 0, aImp: a?.imp ?? 0,
+      bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bClicks: b?.clicks ?? 0, bImp: b?.imp ?? 0,
     })
   }
 
   // Aggregate keywords by (campaignId, keywordText, matchType)
   function aggKwMap(rows: any[]) {
-    const map = new Map<string, { campaignId: number; spend: number; sales: number; orders: number; clicks: number }>()
+    const map = new Map<string, { campaignId: number; bid: number; spend: number; sales: number; orders: number; clicks: number; imp: number }>()
     for (const r of rows) {
       const kw  = r.keyword_text ?? ''
       const mt  = r.match_type   ?? 'broad'
       const cid = n(r.campaign_id)
       const key = `${cid}|${mt}|${kw}`
-      if (!map.has(key)) map.set(key, { campaignId: cid, spend: 0, sales: 0, orders: 0, clicks: 0 })
+      if (!map.has(key)) map.set(key, { campaignId: cid, bid: 0, spend: 0, sales: 0, orders: 0, clicks: 0, imp: 0 })
       const t = map.get(key)!
+      const bid = n(r.bid_cents)
+      if (bid > t.bid) t.bid = bid
       t.spend  += n(r.spend_cents)
       t.sales  += n(r.sales_cents)
       t.orders += n(r.orders)
       t.clicks += n(r.clicks)
+      t.imp    += n(r.impressions)
     }
     return map
   }
@@ -198,8 +202,9 @@ export default async function ComparisonPage({
       matchType:    mt,
       campaignId:   cid,
       campaignName: campNameMap.get(cid) ?? '',
-      aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aClicks: a?.clicks ?? 0,
-      bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bClicks: b?.clicks ?? 0,
+      aBid: a?.bid ?? 0, bBid: b?.bid ?? 0,
+      aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aClicks: a?.clicks ?? 0, aImp: a?.imp ?? 0,
+      bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bClicks: b?.clicks ?? 0, bImp: b?.imp ?? 0,
     })
   }
 

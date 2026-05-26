@@ -549,9 +549,6 @@ Deno.serve(async (req) => {
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
     // Find the pending sync log
-    let query = db.from('sync_logs').select('*').eq('status', 'reports_pending').order('started_at', { ascending: false }).limit(1)
-    if (log_id) query = db.from('sync_logs').select('*').eq('id', log_id).single() as any
-
     const { data: log, error: logErr } = await (log_id
       ? db.from('sync_logs').select('*').eq('id', log_id).single()
       : db.from('sync_logs').select('*').in('status', ['reports_pending', 'downloading']).order('started_at', { ascending: false }).limit(1).maybeSingle()

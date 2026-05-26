@@ -9,12 +9,16 @@ export default function DismissButton({ alertId }: { alertId: number }) {
 
   async function dismiss() {
     setBusy(true)
-    await fetch('/api/alerts/dismiss', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ alert_id: alertId }),
-    })
-    router.refresh()
+    try {
+      await fetch('/api/alerts/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alert_id: alertId }),
+      })
+      router.refresh()
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (

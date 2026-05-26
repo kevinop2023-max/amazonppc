@@ -84,7 +84,7 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
       setSync(latestLog)
       setOtherBatchPending(anyPending)
 
-      if (!anyPending && !syncing) {
+      if (!anyPending) {
         setSyncing(false)
         // Sum only the current sync session (batches started within 5 min of the latest log)
         const latestStarted = latestLog?.started_at ? new Date(latestLog.started_at).getTime() : Date.now()

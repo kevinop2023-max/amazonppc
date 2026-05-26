@@ -14,6 +14,7 @@ interface SyncLog {
 
 const statusConfig = {
   success:         { dot: 'bg-emerald-500',            badge: 'bg-emerald-50 text-emerald-700 border-emerald-100', label: 'Synced'      },
+  creating:        { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
   running:         { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
   reports_pending: { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
   downloading:     { dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'    },
@@ -32,14 +33,14 @@ export default function SyncStatus({ sync: initialSync, profileId }: { sync: Syn
   const supabase = useRef(createClient()).current
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const isStale = (sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && sync.started_at
+  const isStale = (sync?.status === 'creating' || sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && sync.started_at
     ? (Date.now() - new Date(sync.started_at).getTime()) > 30 * 60 * 1000
     : false
-  const isRunning = ((sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && !isStale) || syncing || otherBatchPending
+  const isRunning = ((sync?.status === 'creating' || sync?.status === 'reports_pending' || sync?.status === 'running' || sync?.status === 'downloading') && !isStale) || syncing || otherBatchPending
 
   // A pending log older than 30 min is stale (Amazon report never completed / edge fn timed out)
   function isFreshPending(log: SyncLog) {
-    return (log.status === 'reports_pending' || log.status === 'running' || log.status === 'downloading')
+    return (log.status === 'creating' || log.status === 'reports_pending' || log.status === 'running' || log.status === 'downloading')
       && !!log.started_at
       && Date.now() - new Date(log.started_at).getTime() < 30 * 60 * 1000
   }

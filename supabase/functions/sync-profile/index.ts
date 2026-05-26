@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
     const { data: pending } = await db.from('sync_logs')
       .select('id, started_at')
       .eq('profile_id', profile_id)
-      .in('status', ['reports_pending', 'running', 'downloading'])
+      .in('status', ['creating', 'reports_pending', 'running', 'downloading'])
       .order('started_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -152,8 +152,10 @@ Deno.serve(async (req) => {
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SB spend/clicks report — sales columns not supported at campaign level
     const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
-    // SB_KW: sales columns not supported by sbTargeting in v3 — media metrics only
-    const SB_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
+    // SB_KW: sales columns not supported by sbTargeting in v3 — media metrics only.
+    // NOTE: 'keyword' (text) is not a valid column for sbTargeting — Amazon rejects the request.
+    // Keyword text is unavailable in the SB reporting API; only keywordId is returned.
+    const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
     const SB_ST   = ['date','campaignId','adGroupId','targeting','impressions','clicks','cost']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
     const SB_ATTR = ['date','campaignId','sales14d','orders14d']
@@ -187,10 +189,11 @@ Deno.serve(async (req) => {
       ])
 
       // Insert log entry immediately after SP — visible in sync history within seconds.
-      // SB/SD report IDs will be patched in below once they're submitted.
+      // Status starts as 'creating' so pg_cron sync-poll ignores it until all SB/SD IDs are patched.
+      // SB/SD report IDs will be patched in below, then status flipped to 'reports_pending'.
       const { data: log } = await db.from('sync_logs').insert({
         profile_id, triggered_by,
-        status: 'reports_pending',
+        status: 'creating',
         started_at: new Date().toISOString(),
         date_range_start: startDate,
         date_range_end: endDate,
@@ -216,9 +219,10 @@ Deno.serve(async (req) => {
         createReport(token, pid, 'SD Campaigns', 'SPONSORED_DISPLAY', 'sdCampaigns', ['campaign'], SD_CAMP, startDate, endDate),
       ])
 
-      // Patch in the SB/SD report IDs now that all submissions are done
+      // Patch in the SB/SD report IDs and flip to 'reports_pending' — pg_cron can now pick this up.
       if (log?.id) {
         await db.from('sync_logs').update({
+          status: 'reports_pending',
           report_ids: { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, sdCamp, startDate, endDate },
         }).eq('id', log.id)
       }

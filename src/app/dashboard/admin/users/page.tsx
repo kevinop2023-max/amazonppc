@@ -21,7 +21,7 @@ export default async function AdminUsersPage() {
   const { data: listData } = await service.auth.admin.listUsers({ perPage: 200 })
   const authUsers = listData?.users ?? []
 
-  const { data: roleRows } = await supabase
+  const { data: roleRows } = await service
     .from('user_roles')
     .select('user_id, role, created_at')
 

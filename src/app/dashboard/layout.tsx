@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import DashboardNav from '@/components/DashboardNav'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -8,12 +8,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (!user) redirect('/login')
 
+  // Use service client for role lookup so RLS never blocks it
+  const service = createServiceClient()
+
   const [profilesRes, roleRes] = await Promise.all([
     supabase
       .from('amazon_profiles')
       .select('profile_id, account_name, marketplace, last_sync_at, sync_enabled')
       .order('created_at'),
-    supabase
+    service
       .from('user_roles')
       .select('role')
       .eq('user_id', user.id)

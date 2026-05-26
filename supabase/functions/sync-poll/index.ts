@@ -548,6 +548,25 @@ Deno.serve(async (req) => {
 
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
+    // Recover stale 'creating' logs — sync-profile timed out before patching SB/SD IDs.
+    // Mark them failed so they don't block the guard or confuse the UI.
+    if (!log_id) {
+      const { data: staleCreating } = await db.from('sync_logs')
+        .select('id, started_at')
+        .eq('status', 'creating')
+        .lt('started_at', new Date(Date.now() - 3 * 60 * 1000).toISOString())
+      if (staleCreating?.length) {
+        const ids = staleCreating.map((r: any) => r.id)
+        await db.from('sync_logs').update({
+          status: 'partial',
+          completed_at: new Date().toISOString(),
+          records_upserted: 0,
+          error_message: 'Report submission timed out — SP data only',
+        }).in('id', ids)
+        console.log(`[poll] Recovered ${ids.length} stale creating log(s): ${ids.join(', ')}`)
+      }
+    }
+
     // Find the pending sync log
     const { data: log, error: logErr } = await (log_id
       ? db.from('sync_logs').select('*').eq('id', log_id).single()

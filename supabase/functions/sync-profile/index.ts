@@ -58,8 +58,8 @@ async function refreshAccessToken(rt: string) {
   return { accessToken: d.access_token, expiresAt: new Date(Date.now() + (d.expires_in - 60) * 1000) }
 }
 
-async function createReport(token: string, pid: string, name: string, adProduct: string, typeId: string, groupBy: string[], cols: string[], start: string, end: string, filters?: Array<{field: string, values: string[]}>): Promise<string | null> {
-  const RETRY_WAITS = [15000, 30000, 60000]
+async function createReport(token: string, pid: string, name: string, adProduct: string, typeId: string, groupBy: string[], cols: string[], start: string, end: string, filters?: Array<{field: string, values: string[]}>, maxRetries = 3): Promise<string | null> {
+  const RETRY_WAITS = [15000, 30000, 60000].slice(0, maxRetries)
   for (let attempt = 1; attempt <= RETRY_WAITS.length + 1; attempt++) {
     try {
       const config: Record<string, any> = { adProduct, groupBy, columns: cols, reportTypeId: typeId, timeUnit: 'DAILY', format: 'GZIP_JSON' }
@@ -104,21 +104,21 @@ Deno.serve(async (req) => {
 
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-    // Guard: reject if a fresh sync is already in progress (prevents 429 storms + 504 timeouts)
-    const { data: pending } = await db.from('sync_logs')
-      .select('id, started_at')
-      .eq('profile_id', profile_id)
-      .in('status', ['creating', 'reports_pending', 'running', 'downloading'])
-      .order('started_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if (pending) {
-      const ageMin = (Date.now() - new Date(pending.started_at).getTime()) / 60000
-      if (ageMin < 30) {
-        return new Response(JSON.stringify({ success: false, error: 'Sync already in progress' }), {
-          status: 200, headers: { ...CORS, 'Content-Type': 'application/json' },
-        })
-      }
+    // Guard: reject if a fresh sync is already in progress (prevents 429 storms + 504 timeouts).
+    // 'creating' = sync-profile is still submitting reports; stale after 3 min (edge fn timeout).
+    // 'reports_pending' / 'running' / 'downloading' = waiting for Amazon; stale after 30 min.
+    const [{ data: pendingCreating }, { data: pendingActive }] = await Promise.all([
+      db.from('sync_logs').select('id, started_at').eq('profile_id', profile_id)
+        .eq('status', 'creating').order('started_at', { ascending: false }).limit(1).maybeSingle(),
+      db.from('sync_logs').select('id, started_at').eq('profile_id', profile_id)
+        .in('status', ['reports_pending', 'running', 'downloading']).order('started_at', { ascending: false }).limit(1).maybeSingle(),
+    ])
+    const creatingAge = pendingCreating ? (Date.now() - new Date(pendingCreating.started_at).getTime()) / 60000 : Infinity
+    const activeAge   = pendingActive   ? (Date.now() - new Date(pendingActive.started_at).getTime())   / 60000 : Infinity
+    if (creatingAge < 3 || activeAge < 30) {
+      return new Response(JSON.stringify({ success: false, error: 'Sync already in progress' }), {
+        status: 200, headers: { ...CORS, 'Content-Type': 'application/json' },
+      })
     }
 
     // Manual sync: 60 days (2 batches). Auto/scheduled: 30 days (1 batch) to avoid pg_cron timeout.
@@ -204,15 +204,33 @@ Deno.serve(async (req) => {
       // Wait between SP and SB — SB has a tighter rate limit than SP
       await new Promise(r => setTimeout(r, 15000))
       console.log(`[sync] Creating SB reports for ${startDate} → ${endDate}...`)
-      // sbPurchasedProduct FIRST — it has the tightest rate limit; submit when the bucket is freshest
-      const sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate)
-      await new Promise(r => setTimeout(r, 5000))
-      // Sequential with 8s gaps — firing SB requests too close together triggers 429
-      const sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate)
-      await new Promise(r => setTimeout(r, 8000))
-      const sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate)
-      await new Promise(r => setTimeout(r, 8000))
-      const sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate)
+
+      let sbAttr: string | null
+      let sbCamp: string | null
+      let sbKw:   string | null
+      let sbSt:   string | null
+
+      if (i === 0) {
+        // Batch 1: sbAttr FIRST — bucket is freshest, best chance of success
+        sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate)
+        await new Promise(r => setTimeout(r, 5000))
+        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate)
+        await new Promise(r => setTimeout(r, 8000))
+        sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate)
+        await new Promise(r => setTimeout(r, 8000))
+        sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate)
+      } else {
+        // Batch 2: sbAttr LAST — maximises the gap since batch 1's sbAttr (~90s vs ~60s rate limit).
+        // 0 retries on sbAttr: if throttled, accept null (partial) rather than risk a 150s timeout.
+        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate)
+        await new Promise(r => setTimeout(r, 8000))
+        sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate)
+        await new Promise(r => setTimeout(r, 8000))
+        sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate)
+        await new Promise(r => setTimeout(r, 8000))
+        sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate, undefined, 0)
+      }
+
       await new Promise(r => setTimeout(r, 5000))
       console.log(`[sync] Creating SD reports for ${startDate} → ${endDate}...`)
       const [sdCamp] = await Promise.all([

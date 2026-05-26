@@ -9,6 +9,7 @@ const statusConfig = {
   success:         { badge: 'bg-emerald-50 text-emerald-700 border-emerald-100', label: 'Synced'    },
   partial:         { badge: 'bg-amber-50 text-amber-700 border-amber-100',       label: 'Partial'   },
   failed:          { badge: 'bg-red-50 text-red-600 border-red-100',             label: 'Failed'    },
+  creating:        { badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'  },
   reports_pending: { badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'  },
   running:         { badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'  },
   downloading:     { badge: 'bg-blue-50 text-blue-700 border-blue-100',          label: 'Syncing…'  },

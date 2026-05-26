@@ -67,7 +67,7 @@ export default async function CampaignsPage({
     const map = new Map<number, { campaign_id: number; name: string; state: string; ad_type: string; budget: number | null; spend: number; sales: number; orders: number; impressions: number; clicks: number }>()
     for (const r of data ?? []) {
       if (!map.has(r.campaign_id)) {
-        map.set(r.campaign_id, { campaign_id: r.campaign_id, name: r.campaign_name, state: r.state, ad_type: adType, budget: r.daily_budget_cents, spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 })
+        map.set(r.campaign_id, { campaign_id: r.campaign_id, name: r.campaign_name, state: r.state, ad_type: adType, budget: 0, spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 })
       }
       const c = map.get(r.campaign_id)!
       c.spend      += r.spend_cents
@@ -75,6 +75,7 @@ export default async function CampaignsPage({
       c.orders     += r.orders
       c.impressions += r.impressions
       c.clicks     += r.clicks
+      if ((r.daily_budget_cents ?? 0) > (c.budget ?? 0)) c.budget = r.daily_budget_cents
     }
     return Array.from(map.values())
   }

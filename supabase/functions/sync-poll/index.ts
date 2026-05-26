@@ -510,7 +510,7 @@ async function generateAlerts(db: any, pid: number) {
         termMap.set(key, t)
       }
       for (const [key, t] of termMap) {
-        if (t.orders >= 2 && t.spend > 0 && (t.spend / Math.max(t.sales, 1) * 100) < 15) {
+        if (t.orders >= 2 && t.spend > 0 && (t.spend / Math.max(t.sales, 1) * 100) <= 15) {
           if (!await alertExists(db, pid, 'NEW_CONVERTING_TERM', key)) {
             const acos = t.sales > 0 ? Math.round(t.spend / t.sales * 100) : 0
             toInsert.push({

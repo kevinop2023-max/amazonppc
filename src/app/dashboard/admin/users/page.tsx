@@ -30,6 +30,7 @@ export default async function AdminUsersPage() {
   const users = authUsers.map(u => ({
     id: u.id,
     email: u.email ?? '',
+    name: (u.user_metadata?.full_name as string) ?? '',
     createdAt: u.created_at,
     lastSignIn: u.last_sign_in_at ?? null,
     role: roleMap.get(u.id) ?? 'user' as 'admin' | 'user',

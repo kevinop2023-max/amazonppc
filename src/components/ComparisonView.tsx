@@ -139,7 +139,7 @@ function SummaryCard({
       <div className="flex items-baseline gap-2 mb-2">
         <span className="text-sm text-gray-400 tabular-nums">{aStr}</span>
         <span className="text-gray-300">→</span>
-        <span className="text-xl font-bold text-gray-900 tabular-nums">{bStr}</span>
+        <span className="text-2xl font-bold text-gray-900 tabular-nums">{bStr}</span>
       </div>
       <DeltaBadge value={delta} unit={unit} lowerIsBetter={lowerIsBetter} threshold={unit === 'pp' ? 1 : 2} />
     </div>
@@ -1006,6 +1006,7 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
   const [tab, setTab] = useState<'overview' | 'campaigns' | 'search-terms' | 'keywords' | 'overlap'>('campaigns')
   const [as, setAs] = useState(aStart); const [ae, setAe] = useState(aEnd)
   const [bs, setBs] = useState(bStart); const [be, setBe] = useState(bEnd)
+  const [selectedQuick, setSelectedQuick] = useState<number | null>(14)
 
   function applyDates() {
     const params = new URLSearchParams({
@@ -1067,10 +1068,15 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
               onClick={() => {
                 const q = quickSplit(d)
                 setAs(q.aStart); setAe(q.aEnd); setBs(q.bStart); setBe(q.bEnd)
+                setSelectedQuick(d)
                 const params = new URLSearchParams({ profile_id: String(profileId), aStart: q.aStart, aEnd: q.aEnd, bStart: q.bStart, bEnd: q.bEnd })
                 router.push(`/dashboard/comparison?${params}`)
               }}
-              className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600 transition-all"
+              className={`px-3 py-1 text-xs font-semibold rounded-lg border transition-all ${
+                selectedQuick === d
+                  ? 'bg-orange-500 border-orange-500 text-white shadow-sm'
+                  : 'border-gray-200 text-gray-600 hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600'
+              }`}
             >
               {d}d
             </button>
@@ -1085,12 +1091,12 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
             <div key={label} className="flex items-center gap-2">
               <span className={`text-[11px] font-semibold px-3 py-1.5 rounded-lg border ${color}`}>{label}:</span>
               <input
-                type="date" value={s} onChange={ev => setS(ev.target.value)}
+                type="date" value={s} onChange={ev => { setS(ev.target.value); setSelectedQuick(null) }}
                 className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-orange-300"
               />
               <span className="text-gray-400 text-xs">–</span>
               <input
-                type="date" value={e} onChange={ev => setE(ev.target.value)}
+                type="date" value={e} onChange={ev => { setE(ev.target.value); setSelectedQuick(null) }}
                 className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-orange-300"
               />
             </div>

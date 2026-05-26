@@ -8,16 +8,24 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (!user) redirect('/login')
 
-  // Fetch connected profiles for the nav switcher
-  const { data: profiles } = await supabase
-    .from('amazon_profiles')
-    .select('profile_id, account_name, marketplace, last_sync_at, sync_enabled')
-    .order('created_at')
+  const [profilesRes, roleRes] = await Promise.all([
+    supabase
+      .from('amazon_profiles')
+      .select('profile_id, account_name, marketplace, last_sync_at, sync_enabled')
+      .order('created_at'),
+    supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', user.id)
+      .single(),
+  ])
+
+  const isAdmin = roleRes.data?.role === 'admin'
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <DashboardNav user={user} profiles={profiles ?? []} />
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <DashboardNav user={user} profiles={profilesRes.data ?? []} isAdmin={isAdmin} />
+      <main className="w-full px-[75px] py-8">
         {children}
       </main>
     </div>

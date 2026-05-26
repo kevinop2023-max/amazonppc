@@ -14,7 +14,7 @@ interface Profile {
   sync_enabled: boolean
 }
 
-export default function DashboardNav({ user, profiles }: { user: User; profiles: Profile[] }) {
+export default function DashboardNav({ user, profiles, isAdmin = false }: { user: User; profiles: Profile[]; isAdmin?: boolean }) {
   const pathname     = usePathname() ?? ''
   const router       = useRouter()
   const searchParams = useSearchParams()
@@ -35,13 +35,14 @@ export default function DashboardNav({ user, profiles }: { user: User; profiles:
     { href: `/dashboard/keywords${p}`,     label: 'Keywords',     icon: '◇' },
     { href: `/dashboard/alerts${p}`,       label: 'Alerts',       icon: '◉' },
     { href: `/dashboard/data-sync${p}`,    label: 'Data Sync',    icon: '↺' },
+    ...(isAdmin ? [{ href: '/dashboard/admin/users', label: 'Users', icon: '◎' }] : []),
   ]
 
   const activeProfile = profiles[0]
 
   return (
     <nav className="bg-white border-b border-gray-100 sticky top-0 z-40">
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full px-[75px]">
         <div className="flex items-center justify-between h-14">
 
           {/* Left: Logo + Links */}

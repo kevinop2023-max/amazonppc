@@ -76,7 +76,8 @@ async function createReport(token: string, pid: string, name: string, adProduct:
       })
       const text = await res.text()
       if (res.status === 429) {
-        const wait = RETRY_WAITS[attempt - 1] ?? 60000
+        const wait = RETRY_WAITS[attempt - 1]
+        if (wait == null) break  // last attempt was throttled — no more waits, exit loop immediately
         console.log(`[sync] ${name} throttled (attempt ${attempt}/${RETRY_WAITS.length + 1}), retrying in ${wait / 1000}s... body=${text.slice(0, 200)}`)
         await new Promise(r => setTimeout(r, wait))
         continue

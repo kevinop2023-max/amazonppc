@@ -17,9 +17,12 @@ export type TermComp = {
   bSpend: number; bSales: number; bOrders: number; bClicks: number; bImp: number
 }
 
+export type BidRecord = { date: string; bidCents: number }
+
 export type KwComp = {
-  keywordText: string; matchType: string; campaignId: number; campaignName: string
-  aBid: number; bBid: number
+  keywordId: number; keywordText: string; matchType: string; adType: string
+  campaignId: number; campaignName: string
+  bidHistory: BidRecord[]
   aSpend: number; aSales: number; aOrders: number; aClicks: number; aImp: number
   bSpend: number; bSales: number; bOrders: number; bClicks: number; bImp: number
 }
@@ -717,8 +720,7 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
                 <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Campaign</th>
                 <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Keyword</th>
                 <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Match</th>
-                <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Bid</th>
-                <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">B Bid</th>
+                <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Bid History</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Sales</th>
@@ -738,7 +740,7 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={20} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
+                <tr><td colSpan={19} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
               ) : rows.map((k, i) => {
                 const kAa = acosPct(k.aSpend, k.aSales)
                 const kBa = acosPct(k.bSpend, k.bSales)
@@ -772,8 +774,21 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
                         {k.matchType}
                       </span>
                     </td>
-                    <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aBid > 0 ? fmtD(k.aBid) : '—'}</td>
-                    <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{k.bBid > 0 ? fmtD(k.bBid) : '—'}</td>
+                    <td className="px-3 py-2.5 max-w-[200px]">
+                      {k.bidHistory.length === 0 ? (
+                        <span className="text-[11px] text-gray-300">no data yet</span>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                          {k.bidHistory.map((b, bi) => (
+                            <span key={bi} className="flex items-center gap-1">
+                              {bi > 0 && <span className="text-gray-300 text-[10px]">→</span>}
+                              <span className="text-[11px] font-semibold text-gray-800">{fmtD(b.bidCents)}</span>
+                              <span className="text-[10px] text-gray-400">{fmtDate(b.date)}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aOrders || '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{kAa !== null ? kAa.toFixed(1) + '%' : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aSales > 0 ? fmtD(k.aSales) : '—'}</td>

@@ -113,11 +113,36 @@ async function upsertSpCampaigns(db: any, pid: number, rows: any[]) {
   return r.length
 }
 
+// Records today's bid for each keyword — one row per keyword per sync day.
+// Amazon's bulk report API always returns the CURRENT bid regardless of report date,
+// so this captures a real point-in-time snapshot each time sync runs.
+async function recordBidHistory(db: any, pid: number, rows: any[], adType: 'sp' | 'sb') {
+  const bidMap = new Map<number, { bid: number; text: string; match: string; cid: number }>()
+  for (const r of rows) {
+    const kwId = n(r.keywordId)
+    if (!kwId) continue
+    const bid = toCents(r.keywordBid)
+    if (bid > 0 && !bidMap.has(kwId)) {
+      bidMap.set(kwId, { bid, text: r.keyword ?? '', match: (r.matchType ?? 'broad').toLowerCase(), cid: n(r.campaignId) })
+    }
+  }
+  if (!bidMap.size) return
+  const today = new Date().toISOString().split('T')[0]
+  const records = [...bidMap.entries()].map(([kwId, v]) => ({
+    profile_id: pid, keyword_id: kwId, ad_type: adType,
+    keyword_text: v.text, match_type: v.match, campaign_id: v.cid,
+    bid_cents: v.bid, recorded_date: today,
+  }))
+  const { error } = await db.from('keyword_bid_history').upsert(records, { onConflict: 'profile_id,keyword_id,ad_type,recorded_date' })
+  if (error) console.error(`keyword_bid_history: ${error.message}`)
+}
+
 async function upsertSpKeywords(db: any, pid: number, rows: any[]) {
   const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), ad_group_id: n(r.adGroupId), campaign_id: n(r.campaignId), date: r.date, keyword_text: r.keyword ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
   if (!r.length) return 0
   const { error } = await db.from('sp_keywords').upsert(r, { onConflict: 'profile_id,keyword_id,date' })
   if (error) throw new Error(`sp_keywords: ${error.message}`)
+  await recordBidHistory(db, pid, rows, 'sp')
   return r.length
 }
 
@@ -155,6 +180,7 @@ async function upsertSbKeywords(db: any, pid: number, rows: any[]) {
   if (!r.length) return 0
   const { error } = await db.from('sb_keywords').upsert(r, { onConflict: 'profile_id,keyword_id,date' })
   if (error) throw new Error(`sb_keywords: ${error.message}`)
+  await recordBidHistory(db, pid, rows, 'sb')
   return r.length
 }
 

@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import ComparisonView from '@/components/ComparisonView'
-import type { CampComp, TermComp, KwComp } from '@/components/ComparisonView'
+import type { CampComp, TermComp, KwComp, BidRecord } from '@/components/ComparisonView'
 
 export const revalidate = 0
 
@@ -38,8 +38,8 @@ export default async function ComparisonPage({
   const bStart = searchParams.bStart ?? dateStr(7)
   const bEnd   = searchParams.bEnd   ?? dateStr(1)
 
-  // 10 parallel queries
-  const [spARes, spBRes, sbARes, sbBRes, stARes, stBRes, spKwARes, spKwBRes, sbKwARes, sbKwBRes] = await Promise.all([
+  // 11 parallel queries
+  const [spARes, spBRes, sbARes, sbBRes, stARes, stBRes, spKwARes, spKwBRes, sbKwARes, sbKwBRes, bidHistRes] = await Promise.all([
     supabase.from('sp_campaigns')
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
@@ -59,17 +59,22 @@ export default async function ComparisonPage({
       .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sp_keywords')
-      .select('campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
+      .select('keyword_id, campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sp_keywords')
-      .select('campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
+      .select('keyword_id, campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sb_keywords')
-      .select('campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
+      .select('keyword_id, campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sb_keywords')
-      .select('campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
+      .select('keyword_id, campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
+    supabase.from('keyword_bid_history')
+      .select('keyword_id, ad_type, bid_cents, recorded_date')
+      .eq('profile_id', profileId)
+      .order('recorded_date', { ascending: true })
+      .range(0, 9999),
   ])
 
   // Aggregate campaign rows by campaign_id
@@ -162,17 +167,28 @@ export default async function ComparisonPage({
   }
 
   // Aggregate keywords by (campaignId, keywordText, matchType)
+  // Build bid history map: "${keyword_id}|${ad_type}" → sorted BidRecord[]
+  // Only keep rows where the bid actually changed from the previous entry
+  const rawBidHist = bidHistRes.data ?? []
+  const bidHistMap = new Map<string, BidRecord[]>()
+  for (const r of rawBidHist) {
+    const key = `${n(r.keyword_id)}|${r.ad_type ?? 'sp'}`
+    if (!bidHistMap.has(key)) bidHistMap.set(key, [])
+    bidHistMap.get(key)!.push({ date: r.recorded_date, bidCents: n(r.bid_cents) })
+  }
+  // Deduplicate consecutive identical bids (keep only change events)
+  for (const [key, records] of bidHistMap) {
+    bidHistMap.set(key, records.filter((r, i) => i === 0 || r.bidCents !== records[i - 1].bidCents))
+  }
+
   function aggKwMap(rows: any[]) {
-    const map = new Map<string, { campaignId: number; bid: number; spend: number; sales: number; orders: number; clicks: number; imp: number }>()
+    const map = new Map<string, { keywordId: number; adType: string; campaignId: number; spend: number; sales: number; orders: number; clicks: number; imp: number; text: string; mt: string }>()
     for (const r of rows) {
-      const kw  = r.keyword_text ?? ''
-      const mt  = r.match_type   ?? 'broad'
-      const cid = n(r.campaign_id)
-      const key = `${cid}|${mt}|${kw}`
-      if (!map.has(key)) map.set(key, { campaignId: cid, bid: 0, spend: 0, sales: 0, orders: 0, clicks: 0, imp: 0 })
+      const kwId = n(r.keyword_id)
+      const at   = r._adType ?? 'sp'
+      const key  = `${at}|${kwId}`
+      if (!map.has(key)) map.set(key, { keywordId: kwId, adType: at, campaignId: n(r.campaign_id), spend: 0, sales: 0, orders: 0, clicks: 0, imp: 0, text: r.keyword_text ?? '', mt: r.match_type ?? 'broad' })
       const t = map.get(key)!
-      const bid = n(r.bid_cents)
-      if (bid > t.bid) t.bid = bid
       t.spend  += n(r.spend_cents)
       t.sales  += n(r.sales_cents)
       t.orders += n(r.orders)
@@ -182,27 +198,33 @@ export default async function ComparisonPage({
     return map
   }
 
-  // Combine SP + SB keyword rows per period before aggregating
-  const kwARows = [...(spKwARes.data ?? []), ...(sbKwARes.data ?? [])]
-  const kwBRows = [...(spKwBRes.data ?? []), ...(sbKwBRes.data ?? [])]
-  const kwAMap  = aggKwMap(kwARows)
-  const kwBMap  = aggKwMap(kwBRows)
+  // Tag rows with ad_type before combining
+  const kwARows = [
+    ...(spKwARes.data ?? []).map((r: any) => ({ ...r, _adType: 'sp' })),
+    ...(sbKwARes.data ?? []).map((r: any) => ({ ...r, _adType: 'sb' })),
+  ]
+  const kwBRows = [
+    ...(spKwBRes.data ?? []).map((r: any) => ({ ...r, _adType: 'sp' })),
+    ...(sbKwBRes.data ?? []).map((r: any) => ({ ...r, _adType: 'sb' })),
+  ]
+  const kwAMap = aggKwMap(kwARows)
+  const kwBMap = aggKwMap(kwBRows)
 
   const allKwKeys = new Set([...kwAMap.keys(), ...kwBMap.keys()])
   const keywords: KwComp[] = []
   for (const key of allKwKeys) {
-    const parts = key.split('|')
-    const cid   = Number(parts[0])
-    const mt    = parts[1]
-    const kw    = parts.slice(2).join('|')
-    const a     = kwAMap.get(key)
-    const b     = kwBMap.get(key)
+    const a   = kwAMap.get(key)
+    const b   = kwBMap.get(key)
+    const ref = a ?? b!
+    const bidKey = `${ref.keywordId}|${ref.adType}`
     keywords.push({
-      keywordText:  kw,
-      matchType:    mt,
-      campaignId:   cid,
-      campaignName: campNameMap.get(cid) ?? '',
-      aBid: a?.bid ?? 0, bBid: b?.bid ?? 0,
+      keywordId:    ref.keywordId,
+      keywordText:  ref.text,
+      matchType:    ref.mt,
+      adType:       ref.adType,
+      campaignId:   ref.campaignId,
+      campaignName: campNameMap.get(ref.campaignId) ?? '',
+      bidHistory:   bidHistMap.get(bidKey) ?? [],
       aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aClicks: a?.clicks ?? 0, aImp: a?.imp ?? 0,
       bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bClicks: b?.clicks ?? 0, bImp: b?.imp ?? 0,
     })

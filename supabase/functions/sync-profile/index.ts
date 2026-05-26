@@ -211,8 +211,9 @@ Deno.serve(async (req) => {
       let sbSt:   string | null
 
       if (i === 0) {
-        // Batch 1: sbAttr FIRST — bucket is freshest, best chance of success
-        sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate)
+        // Batch 1: sbAttr FIRST — bucket is freshest, best chance of success.
+        // maxRetries=1: one 15s retry if throttled. 3 retries (113s) would blow the 150s function limit.
+        sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate, undefined, 1)
         await new Promise(r => setTimeout(r, 5000))
         sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate)
         await new Promise(r => setTimeout(r, 8000))

@@ -34,6 +34,7 @@ interface Props {
   camps: CampComp[]
   terms: TermComp[]
   keywords: KwComp[]
+  earliestDate: string | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,6 +50,20 @@ function quickSplit(totalDays: number) {
     aEnd:   clientDateStr(half + 1),
     bStart: clientDateStr(half),
     bEnd:   clientDateStr(1),
+  }
+}
+
+function allTimeSplit(earliest: string) {
+  const start = new Date(earliest + 'T12:00:00Z')
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
+  const mid = new Date((start.getTime() + yesterday.getTime()) / 2)
+  const midStr  = mid.toISOString().split('T')[0]
+  const dayAfterMid = new Date(mid.getTime() + 86400000).toISOString().split('T')[0]
+  return {
+    aStart: earliest,
+    aEnd:   midStr,
+    bStart: dayAfterMid,
+    bEnd:   yesterday.toISOString().split('T')[0],
   }
 }
 
@@ -139,7 +154,7 @@ function SummaryCard({
       <div className="flex items-baseline gap-2 mb-2">
         <span className="text-sm text-gray-400 tabular-nums">{aStr}</span>
         <span className="text-gray-300">→</span>
-        <span className="text-2xl font-bold text-gray-900 tabular-nums">{bStr}</span>
+        <span className="text-base font-semibold text-gray-900 tabular-nums">{bStr}</span>
       </div>
       <DeltaBadge value={delta} unit={unit} lowerIsBetter={lowerIsBetter} threshold={unit === 'pp' ? 1 : 2} />
     </div>
@@ -1001,7 +1016,7 @@ function OverlapTab({ keywords, terms }: { keywords: KwComp[]; terms: TermComp[]
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms, keywords }: Props) {
+export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms, keywords, earliestDate }: Props) {
   const router = useRouter()
   const [tab, setTab] = useState<'overview' | 'campaigns' | 'search-terms' | 'keywords' | 'overlap'>('campaigns')
   const [as, setAs] = useState(aStart); const [ae, setAe] = useState(aEnd)
@@ -1081,6 +1096,24 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
               {d}d
             </button>
           ))}
+          {earliestDate && (
+            <button
+              onClick={() => {
+                const q = allTimeSplit(earliestDate)
+                setAs(q.aStart); setAe(q.aEnd); setBs(q.bStart); setBe(q.bEnd)
+                setSelectedQuick(-1)
+                const params = new URLSearchParams({ profile_id: String(profileId), aStart: q.aStart, aEnd: q.aEnd, bStart: q.bStart, bEnd: q.bEnd })
+                router.push(`/dashboard/comparison?${params}`)
+              }}
+              className={`px-3 py-1 text-xs font-semibold rounded-lg border transition-all ${
+                selectedQuick === -1
+                  ? 'bg-orange-500 border-orange-500 text-white shadow-sm'
+                  : 'border-gray-200 text-gray-600 hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600'
+              }`}
+            >
+              All
+            </button>
+          )}
           <span className="text-[11px] text-gray-300 ml-1">auto-splits into A (first half) + B (second half)</span>
         </div>
         <div className="flex flex-wrap items-end gap-4">

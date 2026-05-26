@@ -38,8 +38,8 @@ export default async function ComparisonPage({
   const bStart = searchParams.bStart ?? dateStr(7)
   const bEnd   = searchParams.bEnd   ?? dateStr(1)
 
-  // 11 parallel queries
-  const [spARes, spBRes, sbARes, sbBRes, stARes, stBRes, spKwARes, spKwBRes, sbKwARes, sbKwBRes, bidHistRes] = await Promise.all([
+  // 12 parallel queries (last one fetches earliest date for "All Time" button)
+  const [spARes, spBRes, sbARes, sbBRes, stARes, stBRes, spKwARes, spKwBRes, sbKwARes, sbKwBRes, bidHistRes, earliestRes] = await Promise.all([
     supabase.from('sp_campaigns')
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
@@ -75,6 +75,11 @@ export default async function ComparisonPage({
       .eq('profile_id', profileId)
       .order('recorded_date', { ascending: true })
       .range(0, 9999),
+    supabase.from('sp_campaigns')
+      .select('date')
+      .eq('profile_id', profileId)
+      .order('date', { ascending: true })
+      .limit(1),
   ])
 
   // Aggregate campaign rows by campaign_id
@@ -230,6 +235,8 @@ export default async function ComparisonPage({
     })
   }
 
+  const earliestDate = earliestRes.data?.[0]?.date ?? null
+
   return (
     <ComparisonView
       profileId={profileId}
@@ -238,6 +245,7 @@ export default async function ComparisonPage({
       camps={camps}
       terms={terms}
       keywords={keywords}
+      earliestDate={earliestDate}
     />
   )
 }

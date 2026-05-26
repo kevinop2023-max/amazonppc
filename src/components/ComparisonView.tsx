@@ -827,11 +827,183 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
   )
 }
 
+// ── Overlap tab ───────────────────────────────────────────────────────────────
+
+function OverlapTab({ keywords, terms }: { keywords: KwComp[]; terms: TermComp[] }) {
+  const [matchFilter, setMatchFilter] = useState<'' | 'exact' | 'phrase' | 'broad'>('')
+
+  // Build lookup: term text (lowercase) → aggregated TermComp metrics
+  const termLookup = useMemo(() => {
+    const map = new Map<string, { aSpend: number; aSales: number; aOrders: number; aClicks: number; aImp: number; bSpend: number; bSales: number; bOrders: number; bClicks: number; bImp: number }>()
+    for (const t of terms) {
+      const key = t.term.toLowerCase().trim()
+      if (!map.has(key)) map.set(key, { aSpend: 0, aSales: 0, aOrders: 0, aClicks: 0, aImp: 0, bSpend: 0, bSales: 0, bOrders: 0, bClicks: 0, bImp: 0 })
+      const m = map.get(key)!
+      m.aSpend += t.aSpend; m.aSales += t.aSales; m.aOrders += t.aOrders; m.aClicks += t.aClicks; m.aImp += t.aImp
+      m.bSpend += t.bSpend; m.bSales += t.bSales; m.bOrders += t.bOrders; m.bClicks += t.bClicks; m.bImp += t.bImp
+    }
+    return map
+  }, [terms])
+
+  // Join: keep only keywords that have a matching search term
+  const rows = useMemo(() => {
+    return keywords
+      .filter(kw => termLookup.has(kw.keywordText.toLowerCase().trim()))
+      .filter(kw => !matchFilter || kw.matchType === matchFilter)
+      .sort((a, b) => {
+        const c = a.campaignName.localeCompare(b.campaignName)
+        if (c !== 0) return c
+        return b.bSpend - a.bSpend
+      })
+  }, [keywords, termLookup, matchFilter])
+
+  const MATCH_CLS: Record<string, string> = {
+    exact:  'bg-blue-50 text-blue-600',
+    phrase: 'bg-amber-50 text-amber-600',
+    broad:  'bg-gray-100 text-gray-500',
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Explanation banner */}
+      <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700 leading-relaxed">
+        <strong>Overlap</strong> = keywords you bid on whose text exactly matches a customer search term.
+        For <strong>exact match</strong> the keyword and search term metrics should be nearly identical (≈100% overlap).
+        For <strong>phrase/broad</strong> the keyword serves many other terms too, so keyword spend &gt; search term spend.
+        The <strong>Match %</strong> column shows how much of the keyword's B spend is attributable to this one search term.
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-400 font-medium">Match type:</span>
+        {([['', `All (${rows.length})`], ['exact', 'Exact'], ['phrase', 'Phrase'], ['broad', 'Broad']] as [string, string][]).map(([val, label]) => (
+          <button
+            key={val}
+            onClick={() => setMatchFilter(val as typeof matchFilter)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border ${
+              matchFilter === val
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+            }`}
+          >{label}</button>
+        ))}
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="py-16 text-center text-sm text-gray-400">No overlapping keywords and search terms found.</div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-50/60 border-b border-gray-100">
+                  <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Campaign</th>
+                  <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Keyword / Search Term</th>
+                  <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Match</th>
+                  <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Bid History</th>
+                  {/* Keyword metrics */}
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">KW A Spend</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">KW A ACoS</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">KW B Spend</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">KW B ACoS</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">KW B Orders</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">KW B Clicks</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">KW B Impr</th>
+                  {/* Divider */}
+                  <th className="px-2 py-3 text-[10px] font-semibold text-gray-300 uppercase whitespace-nowrap text-center">vs</th>
+                  {/* Search term metrics */}
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">ST A Spend</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">ST A ACoS</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">ST B Spend</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">ST B ACoS</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">ST B Orders</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">ST B Clicks</th>
+                  <th className="text-right px-3 py-3 text-[10px] font-semibold text-purple-400 uppercase whitespace-nowrap">ST B Impr</th>
+                  {/* Match quality */}
+                  <th className="text-right px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Match %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((kw, i) => {
+                  const st = termLookup.get(kw.keywordText.toLowerCase().trim())!
+                  const isFirstInGroup = i === 0 || rows[i - 1].campaignName !== kw.campaignName
+
+                  const kwAa = acosPct(kw.aSpend, kw.aSales)
+                  const kwBa = acosPct(kw.bSpend, kw.bSales)
+                  const stAa = acosPct(st.aSpend, st.aSales)
+                  const stBa = acosPct(st.bSpend, st.bSales)
+                  const matchPct = kw.bSpend > 0 ? Math.min(100, st.bSpend / kw.bSpend * 100) : null
+
+                  const matchCls = matchPct === null ? 'text-gray-300'
+                    : matchPct >= 80 ? 'text-emerald-600 font-semibold'
+                    : matchPct >= 40 ? 'text-amber-600'
+                    : 'text-gray-400'
+
+                  return (
+                    <tr key={i} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/40 transition-colors ${isFirstInGroup && i > 0 ? 'border-t border-gray-200' : ''}`}>
+                      <td className="px-4 py-2.5 text-gray-700 max-w-[150px] truncate text-[11px] font-medium align-top pt-3">
+                        {isFirstInGroup ? (kw.campaignName || '—') : ''}
+                      </td>
+                      <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[180px] truncate">{kw.keywordText}</td>
+                      <td className="px-3 py-2.5 text-center">
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${MATCH_CLS[kw.matchType] ?? 'bg-gray-100 text-gray-500'}`}>
+                          {kw.matchType}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 max-w-[180px]">
+                        {kw.bidHistory.length === 0 ? (
+                          <span className="text-[11px] text-gray-300">no data yet</span>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                            {kw.bidHistory.map((b, bi) => (
+                              <span key={bi} className="flex items-center gap-1">
+                                {bi > 0 && <span className="text-gray-300 text-[10px]">→</span>}
+                                <span className="text-[11px] font-semibold text-gray-800">{fmtD(b.bidCents)}</span>
+                                <span className="text-[10px] text-gray-400">{fmtDate(b.date)}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      {/* KW metrics */}
+                      <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{kw.aSpend > 0 ? fmtD(kw.aSpend) : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{kwAa !== null ? kwAa.toFixed(1) + '%' : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{kw.bSpend > 0 ? fmtD(kw.bSpend) : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{kwBa !== null ? kwBa.toFixed(1) + '%' : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{kw.bOrders || '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{kw.bClicks || '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{kw.bImp > 0 ? kw.bImp.toLocaleString() : '—'}</td>
+                      {/* Divider cell */}
+                      <td className="px-2 py-2.5 text-center text-gray-200 text-xs">|</td>
+                      {/* ST metrics */}
+                      <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{st.aSpend > 0 ? fmtD(st.aSpend) : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{stAa !== null ? stAa.toFixed(1) + '%' : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{st.bSpend > 0 ? fmtD(st.bSpend) : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{stBa !== null ? stBa.toFixed(1) + '%' : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 font-semibold tabular-nums">{st.bOrders || '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{st.bClicks || '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-purple-600 tabular-nums">{st.bImp > 0 ? st.bImp.toLocaleString() : '—'}</td>
+                      {/* Match % */}
+                      <td className={`px-4 py-2.5 text-right tabular-nums text-xs ${matchCls}`}>
+                        {matchPct !== null ? matchPct.toFixed(0) + '%' : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms, keywords }: Props) {
   const router = useRouter()
-  const [tab, setTab] = useState<'overview' | 'campaigns' | 'search-terms' | 'keywords'>('campaigns')
+  const [tab, setTab] = useState<'overview' | 'campaigns' | 'search-terms' | 'keywords' | 'overlap'>('campaigns')
   const [as, setAs] = useState(aStart); const [ae, setAe] = useState(aEnd)
   const [bs, setBs] = useState(bStart); const [be, setBe] = useState(bEnd)
 
@@ -864,12 +1036,15 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
   const enabledCount = camps.filter(c => c.state?.toLowerCase() === 'enabled').length
   const termCount    = new Set(terms.map(t => t.term)).size
   const kwCount      = keywords.length
+  const termTextSet  = useMemo(() => new Set(terms.map(t => t.term.toLowerCase().trim())), [terms])
+  const overlapCount = useMemo(() => keywords.filter(kw => termTextSet.has(kw.keywordText.toLowerCase().trim())).length, [keywords, termTextSet])
 
   const tabs = [
     { key: 'overview',      label: 'Overview' },
     { key: 'campaigns',     label: `Campaigns ${enabledCount}` },
     { key: 'search-terms',  label: `Search Terms ${termCount}` },
     { key: 'keywords',      label: `Keywords ${kwCount}` },
+    { key: 'overlap',       label: `Overlap ${overlapCount}` },
   ]
 
   return (
@@ -1038,6 +1213,7 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
       {tab === 'campaigns' && <CampaignsTab camps={camps} terms={terms} aStart={aStart} aEnd={aEnd} bStart={bStart} bEnd={bEnd} />}
       {tab === 'search-terms' && <SearchTermsTab terms={terms} />}
       {tab === 'keywords' && <KeywordsTab keywords={keywords} />}
+      {tab === 'overlap' && <OverlapTab keywords={keywords} terms={terms} />}
 
     </div>
   )

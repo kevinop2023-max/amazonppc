@@ -319,6 +319,225 @@ async function updateSbCampaignSales(db: any, pid: number, rows: any[], sbCampRo
   return updated + inserted
 }
 
+// ── Alert generation ──────────────────────────────────────────────────────────
+// Runs post-sync. Evaluates 5 alert rules against fresh data and inserts
+// non-duplicate alerts. Non-fatal — errors are logged, not thrown.
+
+function daysAgoStr(days: number) {
+  const d = new Date(); d.setDate(d.getDate() - days); return d.toISOString().split('T')[0]
+}
+
+async function alertExists(db: any, pid: number, alertType: string, entityId: string): Promise<boolean> {
+  const { data } = await db.from('alerts')
+    .select('id').eq('profile_id', pid).eq('alert_type', alertType)
+    .eq('entity_id', entityId).is('dismissed_at', null).limit(1)
+  return (data?.length ?? 0) > 0
+}
+
+async function generateAlerts(db: any, pid: number) {
+  try {
+    // Load user's ACOS target (default 30%)
+    const { data: profileRow } = await db.from('amazon_profiles')
+      .select('user_id').eq('profile_id', pid).single()
+    const userId = profileRow?.user_id
+    let acosTarget = 30
+    if (userId) {
+      const { data: userRow } = await db.from('users').select('settings').eq('id', userId).single()
+      const t = Number((userRow?.settings as any)?.acos_target)
+      if (Number.isFinite(t) && t > 0) acosTarget = t
+    }
+
+    const toInsert: any[] = []
+    const now = new Date().toISOString()
+
+    // ── Rule 1: HIGH_ACOS_CAMPAIGN ─────────────────────────────────────────
+    // Campaign ACOS > 2× target for 3+ of the last 3 days (SP + SB combined)
+    {
+      const threshold = acosTarget * 2
+      const since = daysAgoStr(3)
+      const { data: rows } = await db.from('sp_campaigns')
+        .select('campaign_id, campaign_name, date, spend_cents, sales_cents')
+        .eq('profile_id', pid).gte('date', since)
+      const { data: sbRows } = await db.from('sb_campaigns')
+        .select('campaign_id, campaign_name, date, spend_cents, sales_cents')
+        .eq('profile_id', pid).gte('date', since)
+
+      const byDay = new Map<number, Map<string, { spend: number; sales: number; name: string }>>()
+      for (const r of [...(rows ?? []), ...(sbRows ?? [])]) {
+        if (!byDay.has(r.campaign_id)) byDay.set(r.campaign_id, new Map())
+        const dayMap = byDay.get(r.campaign_id)!
+        const ex = dayMap.get(r.date) ?? { spend: 0, sales: 0, name: r.campaign_name }
+        ex.spend += n(r.spend_cents); ex.sales += n(r.sales_cents)
+        ex.name = r.campaign_name
+        dayMap.set(r.date, ex)
+      }
+
+      for (const [cid, dayMap] of byDay) {
+        const days = [...dayMap.values()]
+        const highAcosDays = days.filter(d => d.sales > 0 && (d.spend / d.sales * 100) > threshold)
+        if (highAcosDays.length >= 3) {
+          const totSpend = days.reduce((s, d) => s + d.spend, 0)
+          const totSales = days.reduce((s, d) => s + d.sales, 0)
+          const acos = totSales > 0 ? Math.round(totSpend / totSales * 100) : 0
+          const name = days[0].name
+          if (!await alertExists(db, pid, 'HIGH_ACOS_CAMPAIGN', String(cid))) {
+            toInsert.push({
+              profile_id: pid, alert_type: 'HIGH_ACOS_CAMPAIGN', severity: 'high',
+              entity_type: 'campaign', entity_id: String(cid), entity_name: name,
+              message: `ACoS is ${acos}% — above ${threshold}% (2× your ${acosTarget}% target) for 3+ consecutive days`,
+              suggested_action: 'Review keyword bids; consider pausing top-spend keywords with zero sales',
+              triggered_at: now,
+            })
+          }
+        }
+      }
+    }
+
+    // ── Rule 2: ZERO_SALE_KEYWORD ──────────────────────────────────────────
+    // SP keyword with spend > $10 in the last 14 days and 0 orders
+    {
+      const since = daysAgoStr(14)
+      const { data: rows } = await db.from('sp_keywords')
+        .select('keyword_id, keyword_text, spend_cents, orders, campaign_id')
+        .eq('profile_id', pid).gte('date', since)
+
+      const kwMap = new Map<number, { text: string; spend: number; orders: number }>()
+      for (const r of rows ?? []) {
+        const k = kwMap.get(r.keyword_id) ?? { text: r.keyword_text, spend: 0, orders: 0 }
+        k.spend += n(r.spend_cents); k.orders += n(r.orders)
+        kwMap.set(r.keyword_id, k)
+      }
+      for (const [kwId, kw] of kwMap) {
+        if (kw.spend > 1000 && kw.orders === 0) {
+          if (!await alertExists(db, pid, 'ZERO_SALE_KEYWORD', String(kwId))) {
+            toInsert.push({
+              profile_id: pid, alert_type: 'ZERO_SALE_KEYWORD', severity: 'high',
+              entity_type: 'keyword', entity_id: String(kwId), entity_name: kw.text,
+              message: `Keyword spent $${(kw.spend / 100).toFixed(2)} in 14 days with 0 sales`,
+              suggested_action: 'Add as negative keyword or reduce bid significantly',
+              triggered_at: now,
+            })
+          }
+        }
+      }
+    }
+
+    // ── Rule 3: SPEND_SPIKE ────────────────────────────────────────────────
+    // Campaign yesterday spend > 2× its average of days 2–8 ago (SP only)
+    {
+      const yesterday = daysAgoStr(1)
+      const weekAgo   = daysAgoStr(8)
+      const { data: rows } = await db.from('sp_campaigns')
+        .select('campaign_id, campaign_name, date, spend_cents')
+        .eq('profile_id', pid).gte('date', weekAgo)
+
+      const ydSpend  = new Map<number, { spend: number; name: string }>()
+      const avgSpend = new Map<number, { total: number; days: number; name: string }>()
+
+      for (const r of rows ?? []) {
+        if (r.date === yesterday) {
+          const ex = ydSpend.get(r.campaign_id) ?? { spend: 0, name: r.campaign_name }
+          ex.spend += n(r.spend_cents); ydSpend.set(r.campaign_id, ex)
+        } else {
+          const ex = avgSpend.get(r.campaign_id) ?? { total: 0, days: 0, name: r.campaign_name }
+          ex.total += n(r.spend_cents); ex.days += 1; avgSpend.set(r.campaign_id, ex)
+        }
+      }
+
+      for (const [cid, yd] of ydSpend) {
+        const avg = avgSpend.get(cid)
+        if (!avg || avg.days < 3) continue
+        const dailyAvg = avg.total / avg.days
+        if (dailyAvg < 500) continue // ignore tiny campaigns (< $5/day avg)
+        if (yd.spend > dailyAvg * 2) {
+          if (!await alertExists(db, pid, 'SPEND_SPIKE', String(cid))) {
+            toInsert.push({
+              profile_id: pid, alert_type: 'SPEND_SPIKE', severity: 'medium',
+              entity_type: 'campaign', entity_id: String(cid), entity_name: yd.name,
+              message: `Spend spiked to $${(yd.spend / 100).toFixed(2)} yesterday — ${Math.round(yd.spend / dailyAvg)}× the 7-day average ($${(dailyAvg / 100).toFixed(2)}/day)`,
+              suggested_action: 'Check for broad match terms causing irrelevant traffic; review search term report',
+              triggered_at: now,
+            })
+          }
+        }
+      }
+    }
+
+    // ── Rule 4: ZERO_IMPRESSION_KEYWORD ───────────────────────────────────
+    // Active SP keyword with 0 impressions across the last 14 days
+    {
+      const since = daysAgoStr(14)
+      const { data: rows } = await db.from('sp_keywords')
+        .select('keyword_id, keyword_text, state, impressions')
+        .eq('profile_id', pid).gte('date', since)
+
+      const kwMap = new Map<number, { text: string; imp: number; state: string }>()
+      for (const r of rows ?? []) {
+        const k = kwMap.get(r.keyword_id) ?? { text: r.keyword_text, imp: 0, state: r.state }
+        k.imp += n(r.impressions)
+        if (r.state === 'enabled') k.state = 'enabled'
+        kwMap.set(r.keyword_id, k)
+      }
+      for (const [kwId, kw] of kwMap) {
+        if (kw.imp === 0 && kw.state === 'enabled') {
+          if (!await alertExists(db, pid, 'ZERO_IMPRESSION_KEYWORD', String(kwId))) {
+            toInsert.push({
+              profile_id: pid, alert_type: 'ZERO_IMPRESSION_KEYWORD', severity: 'low',
+              entity_type: 'keyword', entity_id: String(kwId), entity_name: kw.text,
+              message: `Active keyword has 0 impressions in 14 days — bid may be too low or listing suppressed`,
+              suggested_action: 'Increase bid or check listing status; consider pausing if bid increase is not viable',
+              triggered_at: now,
+            })
+          }
+        }
+      }
+    }
+
+    // ── Rule 5: NEW_CONVERTING_TERM ───────────────────────────────────────
+    // SP search term with ACoS < 15% and ≥2 orders in last 7 days
+    {
+      const since = daysAgoStr(7)
+      const { data: rows } = await db.from('sp_search_terms')
+        .select('customer_search_term, campaign_id, spend_cents, sales_cents, orders')
+        .eq('profile_id', pid).gte('date', since)
+
+      type TermAgg = { term: string; cid: number; spend: number; sales: number; orders: number }
+      const termMap = new Map<string, TermAgg>()
+      for (const r of rows ?? []) {
+        const key = `${n(r.campaign_id)}|${r.customer_search_term}`
+        const t = termMap.get(key) ?? { term: r.customer_search_term, cid: n(r.campaign_id), spend: 0, sales: 0, orders: 0 }
+        t.spend += n(r.spend_cents); t.sales += n(r.sales_cents); t.orders += n(r.orders)
+        termMap.set(key, t)
+      }
+      for (const [key, t] of termMap) {
+        if (t.orders >= 2 && t.spend > 0 && (t.spend / Math.max(t.sales, 1) * 100) < 15) {
+          if (!await alertExists(db, pid, 'NEW_CONVERTING_TERM', key)) {
+            const acos = t.sales > 0 ? Math.round(t.spend / t.sales * 100) : 0
+            toInsert.push({
+              profile_id: pid, alert_type: 'NEW_CONVERTING_TERM', severity: 'low',
+              entity_type: 'search_term', entity_id: key, entity_name: t.term,
+              message: `"${t.term}" has ${t.orders} orders at ${acos}% ACoS in 7 days — ready to harvest`,
+              suggested_action: 'Add as Exact match keyword in a dedicated campaign; add as negative Exact to the Auto campaign',
+              triggered_at: now,
+            })
+          }
+        }
+      }
+    }
+
+    // ── Insert all new alerts ──────────────────────────────────────────────
+    if (toInsert.length) {
+      const { error } = await db.from('alerts').insert(toInsert)
+      if (error) console.error(`[alerts] Insert error: ${error.message}`)
+      else console.log(`[alerts] Inserted ${toInsert.length} new alert(s)`)
+    } else {
+      console.log('[alerts] No new alerts generated')
+    }
+  } catch (err) {
+    console.error(`[alerts] generateAlerts failed: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -462,6 +681,8 @@ Deno.serve(async (req) => {
       records_upserted: total,
       metadata: { records_by_type: { sp: spTotal, sb: sbTotal, sd: sdTotal } },
     }).eq('id', log.id)
+
+    await generateAlerts(db, pid)
 
     console.log(`[poll] Done — ${total} records upserted`)
     return new Response(JSON.stringify({ status: 'success', records_upserted: total }), {

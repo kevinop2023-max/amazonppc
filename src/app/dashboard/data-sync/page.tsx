@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import SyncStatus from '@/components/SyncStatus'
 import SyncHistoryRefresh from '@/components/SyncHistoryRefresh'
+import AcosTargetSetting from '@/components/AcosTargetSetting'
 
 export const revalidate = 0
 
@@ -33,6 +34,12 @@ export default async function DataSyncPage({
     : (usProfile ?? profiles?.[0])?.profile_id ?? null
 
   if (!profileId) return <p className="text-sm text-gray-500 p-6">No Amazon account connected.</p>
+
+  const { data: { user } } = await supabase.auth.getUser()
+  const userSettingsRes = user
+    ? await supabase.from('users').select('settings').eq('id', user.id).single()
+    : null
+  const acosTarget = Number((userSettingsRes?.data?.settings as any)?.acos_target ?? 30)
 
   const [syncLogsRes, historyRes] = await Promise.all([
     supabase
@@ -76,6 +83,17 @@ export default async function DataSyncPage({
       </div>
 
       <SyncStatus sync={syncForDisplay} profileId={profileId} />
+
+      {/* ── Alert settings ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Alert Settings</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Used to detect high-ACOS campaigns and set bid targets</p>
+          </div>
+          <AcosTargetSetting initial={acosTarget} />
+        </div>
+      </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">

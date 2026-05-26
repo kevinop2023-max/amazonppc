@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import DismissButton from '@/components/DismissButton'
 
 export const revalidate = 0
 
@@ -114,9 +115,7 @@ export default async function AlertsPage({
                     <span className="text-xs text-gray-400">
                       {new Date(alert.triggered_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     </span>
-                    <button className="text-[11px] font-medium text-gray-400 hover:text-gray-600 border border-gray-200 px-2.5 py-1 rounded-lg hover:bg-gray-50 transition-colors">
-                      Dismiss
-                    </button>
+                    <DismissButton alertId={alert.id} />
                   </div>
                 </div>
               </div>

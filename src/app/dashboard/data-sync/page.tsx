@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import SyncStatus from '@/components/SyncStatus'
 import SyncHistoryRefresh from '@/components/SyncHistoryRefresh'
 import AcosTargetSetting from '@/components/AcosTargetSetting'
+import LocalTime from '@/components/LocalTime'
 
 export const revalidate = 0
 
@@ -130,8 +131,8 @@ export default async function DataSyncPage({
                   const byType = (log.metadata as any)?.records_by_type as { sp?: number; sb?: number; sd?: number } | undefined
                   return (
                     <tr key={log.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
-                      <td className="px-5 py-3.5 text-xs text-gray-700 tabular-nums whitespace-nowrap" suppressHydrationWarning>
-                        {new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                      <td className="px-5 py-3.5 text-xs text-gray-700 tabular-nums whitespace-nowrap">
+                        <LocalTime iso={t} options={{ month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }} />
                       </td>
                       <td className="px-4 py-3.5">
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${cfg.badge}`}>

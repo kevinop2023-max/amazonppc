@@ -86,7 +86,7 @@ export default async function CampaignsPage({
     const metaMap = new Map<number, { name: string; state: string; budget: number | null }>()
     for (const r of metaRows ?? []) {
       if (!metaMap.has(r.campaign_id)) {
-        metaMap.set(r.campaign_id, { name: r.campaign_name, state: r.state, budget: r.daily_budget_cents })
+        metaMap.set(r.campaign_id, { name: r.campaign_name, state: (r.state ?? 'enabled').toLowerCase(), budget: r.daily_budget_cents })
       }
     }
 

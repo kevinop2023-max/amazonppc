@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import PerformanceChart from './PerformanceChart'
 import type { DayData } from './PerformanceChart'
+import CombinedPerformanceChart from './CombinedPerformanceChart'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1183,7 +1184,10 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
         />
       </div>
 
-      {/* Performance Charts — Period A and Period B side by side */}
+      {/* Combined chart — A (dashed) and B (solid) overlaid */}
+      <CombinedPerformanceChart dataA={chartDataA} dataB={chartDataB} labelA={labelA} labelB={labelB} />
+
+      {/* Separate period charts — A and B side by side */}
       <div className="grid grid-cols-2 gap-4">
         <PerformanceChart data={chartDataA} title={`Period A: ${labelA}`} />
         <PerformanceChart data={chartDataB} title={`Period B: ${labelB}`} />

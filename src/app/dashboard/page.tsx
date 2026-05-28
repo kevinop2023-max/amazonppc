@@ -6,6 +6,8 @@ import DateRangePicker from '@/components/DateRangePicker'
 import PeriodComparisonCharts from '@/components/PeriodComparisonCharts'
 import type { PeriodData } from '@/components/PeriodComparisonCharts'
 import KpiComparisonTable from '@/components/KpiComparisonTable'
+import PerformanceChart from '@/components/PerformanceChart'
+import type { DayData } from '@/components/PerformanceChart'
 import Link from 'next/link'
 
 export const revalidate = 0
@@ -22,7 +24,21 @@ function fmtDate(s: string) {
   return new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-type CampRow = { date: string; campaign_id: number; campaign_name: string; spend_cents: number; sales_cents: number; orders: number }
+type CampRow = { date: string; campaign_id: number; campaign_name: string; spend_cents: number; sales_cents: number; orders: number; clicks: number }
+
+function buildDailyChart(spRows: CampRow[], sbRows: CampRow[]): DayData[] {
+  const map = new Map<string, { spendCents: number; salesCents: number; orders: number; clicks: number }>()
+  for (const r of [...spRows, ...sbRows]) {
+    const d = r.date ?? ''; if (!d) continue
+    if (!map.has(d)) map.set(d, { spendCents: 0, salesCents: 0, orders: 0, clicks: 0 })
+    const m = map.get(d)!
+    m.spendCents += r.spend_cents ?? 0
+    m.salesCents += r.sales_cents ?? 0
+    m.orders     += r.orders      ?? 0
+    m.clicks     += r.clicks      ?? 0
+  }
+  return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, m]) => ({ date, ...m }))
+}
 
 function agg(rows: CampRow[]) {
   const ids = new Set<number>()
@@ -113,8 +129,8 @@ export default async function DashboardPage({
   const [metricsRes, alertsRes, spRes, sbRes, fhRes, shRes] = await Promise.all([
     supabase.rpc('get_overview_metrics', { p_profile_id: profileId, p_start: startStr, p_end: endStr }),
     supabase.from('alerts').select('id, alert_type, severity, entity_name, message, triggered_at').eq('profile_id', profileId).is('dismissed_at', null).order('triggered_at', { ascending: false }).limit(5),
-    supabase.from('sp_campaigns').select('date, campaign_id, campaign_name, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
-    supabase.from('sb_campaigns').select('date, campaign_id, campaign_name, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
+    supabase.from('sp_campaigns').select('date, campaign_id, campaign_name, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
+    supabase.from('sb_campaigns').select('date, campaign_id, campaign_name, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
     fhPromise,
     shPromise,
   ])
@@ -247,6 +263,9 @@ export default async function DashboardPage({
       <p className="text-xs text-gray-400 -mt-3">
         Includes SP + SB. Small variance vs Amazon Ads is normal — attribution data updates over 48–72h.
       </p>
+
+      {/* ── Daily Trend Chart ── */}
+      <PerformanceChart data={buildDailyChart(spRows, sbRows)} title={isCustomRange ? `${startStr} — ${endStr}` : `Last ${days} days`} />
 
       {/* ── Campaign Performance Breakdown ── */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">

@@ -20,27 +20,42 @@ export default async function SearchTermsPage({
 
   const startStr = new Date(Date.now() - days * 86400000).toISOString().split('T')[0]
 
-  const { data: rows } = await supabase
-    .from('sp_search_terms')
-    .select('customer_search_term, impressions, clicks, spend_cents, sales_cents, orders')
-    .eq('profile_id', profileId)
-    .gte('date', startStr)
-    .range(0, 49999)
+  const [spRes, sbRes] = await Promise.all([
+    supabase
+      .from('sp_search_terms')
+      .select('customer_search_term, impressions, clicks, spend_cents, sales_cents, orders')
+      .eq('profile_id', profileId)
+      .gte('date', startStr)
+      .range(0, 49999),
+    supabase
+      .from('sb_search_terms')
+      .select('customer_search_term, impressions, clicks, spend_cents, sales_cents, orders')
+      .eq('profile_id', profileId)
+      .gte('date', startStr)
+      .range(0, 49999),
+  ])
 
-  const map = new Map<string, { spend: number; sales: number; orders: number; clicks: number; impressions: number }>()
-  for (const r of rows ?? []) {
-    if (!map.has(r.customer_search_term))
-      map.set(r.customer_search_term, { spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 })
-    const a = map.get(r.customer_search_term)!
-    a.spend      += r.spend_cents
-    a.sales      += r.sales_cents
-    a.orders     += r.orders
-    a.clicks     += r.clicks
-    a.impressions += r.impressions
+  // key = "SP|term" or "SB|term" to keep ad types separate
+  const map = new Map<string, { adType: string; spend: number; sales: number; orders: number; clicks: number; impressions: number }>()
+
+  function addRows(rows: any[] | null, adType: string) {
+    for (const r of rows ?? []) {
+      const key = `${adType}|${r.customer_search_term}`
+      if (!map.has(key)) map.set(key, { adType, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 })
+      const a = map.get(key)!
+      a.spend       += r.spend_cents
+      a.sales       += r.sales_cents
+      a.orders      += r.orders
+      a.clicks      += r.clicks
+      a.impressions += r.impressions
+    }
   }
+  addRows(spRes.data, 'SP')
+  addRows(sbRes.data, 'SB')
 
-  let terms = Array.from(map.entries()).map(([term, t]) => ({
-    term,
+  let terms = Array.from(map.entries()).map(([key, t]) => ({
+    term:   key.slice(key.indexOf('|') + 1),
+    adType: t.adType,
     spend:  t.spend / 100,
     sales:  t.sales / 100,
     orders: t.orders,
@@ -50,20 +65,25 @@ export default async function SearchTermsPage({
     cvr:    t.clicks > 0 ? Math.round(t.orders / t.clicks * 10000) / 100 : null,
   }))
 
-  if (mode === 'wasted')     terms = terms.filter(t => t.sales === 0 && t.spend >= minSpend).sort((a, b) => b.spend - a.spend)
+  if (mode === 'wasted')          terms = terms.filter(t => t.sales === 0 && t.spend >= minSpend).sort((a, b) => b.spend - a.spend)
   else if (mode === 'converters') terms = terms.filter(t => t.orders >= 2 && t.acos !== null && t.acos <= 15).sort((a, b) => b.orders - a.orders)
-  else terms.sort((a, b) => b.spend - a.spend)
+  else                            terms.sort((a, b) => b.spend - a.spend)
 
   const totalWaste = mode === 'wasted' ? terms.reduce((s, t) => s + t.spend, 0) : null
 
   const modes = [
-    { key: 'all',        label: 'All Terms',   icon: '⊞' },
+    { key: 'all',        label: 'All Terms',    icon: '⊞' },
     { key: 'wasted',     label: 'Wasted Spend', icon: '🗑' },
     { key: 'converters', label: 'Converters',   icon: '⭐' },
   ]
 
   const buildUrl = (m: string) =>
     `/dashboard/search-terms?profile_id=${profileId}&days=${days}&mode=${m}&min_spend=${minSpend}`
+
+  const adTypeCls: Record<string, string> = {
+    SP: 'bg-blue-50 text-blue-600',
+    SB: 'bg-purple-50 text-purple-600',
+  }
 
   return (
     <div className="space-y-6">
@@ -72,7 +92,7 @@ export default async function SearchTermsPage({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Search Terms</h1>
-          <p className="text-sm text-gray-400 mt-0.5">{terms.length} terms · last {days} days</p>
+          <p className="text-sm text-gray-400 mt-0.5">{terms.length} terms · last {days} days · SP + SB</p>
         </div>
         <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
           {modes.map(m => (
@@ -122,6 +142,7 @@ export default async function SearchTermsPage({
             <thead>
               <tr className="border-b border-gray-50">
                 <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Search Term</th>
+                <th className="text-center px-3 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Type</th>
                 <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Spend</th>
                 <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sales</th>
                 <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">ACOS</th>
@@ -136,7 +157,7 @@ export default async function SearchTermsPage({
             <tbody>
               {terms.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-16 text-center text-sm text-gray-400">
+                  <td colSpan={9} className="px-5 py-16 text-center text-sm text-gray-400">
                     {mode === 'wasted' ? `No search terms with >${minSpend} spend and zero sales.` :
                      mode === 'converters' ? 'No converting terms with ACOS ≤ 15% and 2+ orders.' :
                      'No search term data for this period.'}
@@ -146,6 +167,11 @@ export default async function SearchTermsPage({
                 <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
                   <td className="px-5 py-3.5 font-medium text-gray-900 max-w-xs">
                     <span className="truncate block" title={t.term}>{t.term}</span>
+                  </td>
+                  <td className="px-3 py-3.5 text-center">
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${adTypeCls[t.adType] ?? ''}`}>
+                      {t.adType}
+                    </span>
                   </td>
                   <td className="px-4 py-3.5 text-right font-semibold text-gray-900 tabular-nums">${t.spend.toFixed(2)}</td>
                   <td className="px-4 py-3.5 text-right text-gray-600 tabular-nums">${t.sales.toFixed(2)}</td>

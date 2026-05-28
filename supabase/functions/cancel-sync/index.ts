@@ -21,7 +21,7 @@ Deno.serve(async (req) => {
       .from('sync_logs')
       .update({ status: 'cancelled', completed_at: new Date().toISOString() })
       .eq('profile_id', profile_id)
-      .eq('status', 'reports_pending')
+      .in('status', ['creating', 'reports_pending', 'running'])
 
     if (error) throw error
 

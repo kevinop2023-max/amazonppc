@@ -183,10 +183,12 @@ Deno.serve(async (req) => {
       }
       const { startDate, endDate } = batches[i]
       console.log(`[sync] Creating SP reports for ${startDate} → ${endDate}...`)
+      // maxRetries=0 for SP — fail fast. SP is almost never throttled; a null ID just
+      // means 0 records for that report this batch, which is recoverable on next sync.
       const [spCamp, spKw, spSt] = await Promise.all([
-        createReport(token, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMP, startDate, endDate),
-        createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate),
-        createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate),
+        createReport(token, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMP, startDate, endDate, undefined, 0),
+        createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate, undefined, 0),
+        createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate, undefined, 0),
       ])
 
       // Insert log entry immediately after SP — visible in sync history within seconds.
@@ -202,8 +204,8 @@ Deno.serve(async (req) => {
       }).select('id').single()
       if (log?.id) logIds.push(log.id)
 
-      // Wait between SP and SB — SB has a tighter rate limit than SP
-      await new Promise(r => setTimeout(r, 15000))
+      // 5s gap between SP and SB is sufficient — sequential SB submission keeps rate low.
+      await new Promise(r => setTimeout(r, 5000))
       console.log(`[sync] Creating SB reports for ${startDate} → ${endDate}...`)
 
       let sbAttr: string | null
@@ -212,31 +214,31 @@ Deno.serve(async (req) => {
       let sbSt:   string | null
 
       if (i === 0) {
-        // Batch 1: sbAttr FIRST — bucket is freshest, best chance of success.
-        // maxRetries=1: one 15s retry if throttled. 3 retries (113s) would blow the 150s function limit.
+        // Batch 1: sbAttr FIRST — rate-limit bucket freshest at start.
+        // maxRetries=1 for sbAttr only (one 15s retry). All others: maxRetries=0 (fail fast).
+        // Old code used maxRetries=3 (15+30+60s) for sbCamp/sbKw/sbSt — that alone could timeout.
         sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate, undefined, 1)
+        await new Promise(r => setTimeout(r, 3000))
+        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 0)
         await new Promise(r => setTimeout(r, 5000))
-        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate)
-        await new Promise(r => setTimeout(r, 8000))
-        sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate)
-        await new Promise(r => setTimeout(r, 8000))
-        sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate)
+        sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate, undefined, 0)
+        await new Promise(r => setTimeout(r, 5000))
+        sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate, undefined, 0)
       } else {
-        // Batch 2: sbAttr LAST — maximises the gap since batch 1's sbAttr (~90s vs ~60s rate limit).
-        // 0 retries on sbAttr: if throttled, accept null (partial) rather than risk a 150s timeout.
-        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate)
-        await new Promise(r => setTimeout(r, 8000))
-        sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate)
-        await new Promise(r => setTimeout(r, 8000))
-        sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate)
-        await new Promise(r => setTimeout(r, 8000))
+        // Batch 2: sbAttr LAST. All maxRetries=0 — no retries to stay within 150s total budget.
+        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 0)
+        await new Promise(r => setTimeout(r, 5000))
+        sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate, undefined, 0)
+        await new Promise(r => setTimeout(r, 5000))
+        sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate, undefined, 0)
+        await new Promise(r => setTimeout(r, 5000))
         sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate, undefined, 0)
       }
 
-      await new Promise(r => setTimeout(r, 5000))
+      await new Promise(r => setTimeout(r, 3000))
       console.log(`[sync] Creating SD reports for ${startDate} → ${endDate}...`)
       const [sdCamp] = await Promise.all([
-        createReport(token, pid, 'SD Campaigns', 'SPONSORED_DISPLAY', 'sdCampaigns', ['campaign'], SD_CAMP, startDate, endDate),
+        createReport(token, pid, 'SD Campaigns', 'SPONSORED_DISPLAY', 'sdCampaigns', ['campaign'], SD_CAMP, startDate, endDate, undefined, 0),
       ])
 
       // Patch in the SB/SD report IDs and flip to 'reports_pending' — pg_cron can now pick this up.

@@ -16,6 +16,6 @@ Write-Host "Deploying sync-profile..." -ForegroundColor Cyan
 npx supabase@1.207.9 functions deploy sync-profile --project-ref otkxwlogknxhnwyzkfxq --no-verify-jwt
 
 Write-Host "Deploying sync-poll..." -ForegroundColor Cyan
-npx supabase@1.207.9 functions deploy sync-poll --project-ref otkxwlogknxhnwyzkfxq
+npx supabase@1.207.9 functions deploy sync-poll --project-ref otkxwlogknxhnwyzkfxq --no-verify-jwt
 
 Write-Host "Done." -ForegroundColor Green

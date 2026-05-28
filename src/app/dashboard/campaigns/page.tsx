@@ -30,14 +30,21 @@ function AdTypePill({ type }: { type: string }) {
   )
 }
 
+function SortIcon({ active, dir }: { active: boolean; dir: string }) {
+  if (!active) return <span className="text-gray-300 ml-0.5">↕</span>
+  return <span className="ml-0.5">{dir === 'asc' ? '↑' : '↓'}</span>
+}
+
 function dateStr(daysAgo: number) {
   const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().split('T')[0]
 }
 
+type SortKey = 'spend' | 'sales' | 'acos' | 'roas' | 'orders' | 'impressions' | 'clicks' | 'cpc' | 'ctr'
+
 export default async function CampaignsPage({
   searchParams,
 }: {
-  searchParams: { profile_id?: string; days?: string; start?: string; end?: string; type?: string; state?: string }
+  searchParams: { profile_id?: string; days?: string; start?: string; end?: string; type?: string; state?: string; sort?: string; dir?: string }
 }) {
   const supabase = await createClient()
 
@@ -47,6 +54,8 @@ export default async function CampaignsPage({
   const days     = Number(searchParams.days ?? 30)
   const type     = searchParams.type
   const state    = searchParams.state
+  const sortKey  = (searchParams.sort ?? 'spend') as SortKey
+  const sortDir  = searchParams.dir ?? 'desc'
   const isCustom = !!(searchParams.start && searchParams.end)
   const startStr = searchParams.start ?? dateStr(days)
   const endStr   = searchParams.end   ?? dateStr(1)
@@ -70,11 +79,11 @@ export default async function CampaignsPage({
         map.set(r.campaign_id, { campaign_id: r.campaign_id, name: r.campaign_name, state: r.state, ad_type: adType, budget: 0, spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 })
       }
       const c = map.get(r.campaign_id)!
-      c.spend      += r.spend_cents
-      c.sales      += r.sales_cents
-      c.orders     += r.orders
+      c.spend       += r.spend_cents
+      c.sales       += r.sales_cents
+      c.orders      += r.orders
       c.impressions += r.impressions
-      c.clicks     += r.clicks
+      c.clicks      += r.clicks
       if ((r.daily_budget_cents ?? 0) > (c.budget ?? 0)) c.budget = r.daily_budget_cents
     }
     return Array.from(map.values())
@@ -89,12 +98,18 @@ export default async function CampaignsPage({
   const campaigns = results.flat()
     .map(c => ({
       ...c,
-      acos: c.sales > 0  ? Math.round(c.spend / c.sales * 1000) / 10 : null,
-      roas: c.spend > 0  ? Math.round(c.sales / c.spend * 100) / 100  : null,
-      cpc:  c.clicks > 0 ? c.spend / c.clicks / 100                   : null,
+      acos: c.sales > 0       ? Math.round(c.spend / c.sales * 1000) / 10          : null,
+      roas: c.spend > 0       ? Math.round(c.sales / c.spend * 100) / 100           : null,
+      cpc:  c.clicks > 0      ? c.spend / c.clicks / 100                            : null,
       ctr:  c.impressions > 0 ? Math.round(c.clicks / c.impressions * 10000) / 100 : null,
     }))
-    .sort((a, b) => b.spend - a.spend)
+    .sort((a, b) => {
+      const aVal = a[sortKey] ?? (sortDir === 'asc' ? Infinity : -Infinity)
+      const bVal = b[sortKey] ?? (sortDir === 'asc' ? Infinity : -Infinity)
+      return sortDir === 'asc'
+        ? (aVal as number) - (bVal as number)
+        : (bVal as number) - (aVal as number)
+    })
 
   const totalSpend  = campaigns.reduce((s, c) => s + c.spend, 0)
   const totalSales  = campaigns.reduce((s, c) => s + c.sales, 0)
@@ -108,11 +123,30 @@ export default async function CampaignsPage({
       start: searchParams.start,
       end: searchParams.end,
       days: String(days),
+      sort: sortKey,
+      dir: sortDir,
       ...params,
     }
     const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('&')
     return `/dashboard/campaigns?${qs}`
   }
+
+  function sortUrl(col: SortKey) {
+    const newDir = sortKey === col && sortDir === 'desc' ? 'asc' : 'desc'
+    return buildUrl({ sort: col, dir: newDir })
+  }
+
+  const cols: { key: SortKey; label: string }[] = [
+    { key: 'spend',       label: 'Spend'   },
+    { key: 'sales',       label: 'Sales'   },
+    { key: 'acos',        label: 'ACOS'    },
+    { key: 'roas',        label: 'ROAS'    },
+    { key: 'orders',      label: 'Orders'  },
+    { key: 'impressions', label: 'Impr.'   },
+    { key: 'clicks',      label: 'Clicks'  },
+    { key: 'cpc',         label: 'CPC'     },
+    { key: 'ctr',         label: 'CTR'     },
+  ]
 
   return (
     <div className="space-y-6">
@@ -126,12 +160,22 @@ export default async function CampaignsPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {/* Type filter */}
+          {/* Ad type filter */}
           <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
             {[['', 'All'], ['SP', 'SP'], ['SB', 'SB'], ['SD', 'SD']].map(([t, label]) => (
               <Link key={t} href={buildUrl({ type: t || undefined })}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
                   (type ?? '') === t ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >{label}</Link>
+            ))}
+          </div>
+          {/* State filter */}
+          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
+            {([['', 'All'], ['enabled', 'Enabled'], ['paused', 'Paused'], ['archived', 'Archived']] as const).map(([s, label]) => (
+              <Link key={s} href={buildUrl({ state: s || undefined })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  (state ?? '') === s ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800'
                 }`}
               >{label}</Link>
             ))}
@@ -175,20 +219,19 @@ export default async function CampaignsPage({
             <thead>
               <tr className="border-b border-gray-50">
                 <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Campaign</th>
-                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Spend</th>
-                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sales</th>
-                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">ACOS</th>
-                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">ROAS</th>
-                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Orders</th>
-                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Clicks</th>
-                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">CPC</th>
-                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">CTR</th>
+                {cols.map(col => (
+                  <th key={col.key} className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">
+                    <Link href={sortUrl(col.key)} className={`inline-flex items-center justify-end gap-0.5 hover:text-gray-700 transition-colors ${sortKey === col.key ? 'text-gray-700' : ''}`}>
+                      {col.label}<SortIcon active={sortKey === col.key} dir={sortDir} />
+                    </Link>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {campaigns.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-16 text-center text-sm text-gray-400">
+                  <td colSpan={10} className="px-5 py-16 text-center text-sm text-gray-400">
                     No campaign data for this period. Sync your account to get started.
                   </td>
                 </tr>
@@ -214,6 +257,7 @@ export default async function CampaignsPage({
                     {c.roas !== null ? `${c.roas}x` : <span className="text-gray-300">—</span>}
                   </td>
                   <td className="px-4 py-3.5 text-right text-gray-600 text-sm tabular-nums">{c.orders.toLocaleString()}</td>
+                  <td className="px-4 py-3.5 text-right text-gray-500 text-sm tabular-nums">{c.impressions.toLocaleString()}</td>
                   <td className="px-4 py-3.5 text-right text-gray-600 text-sm tabular-nums">{c.clicks.toLocaleString()}</td>
                   <td className="px-4 py-3.5 text-right text-gray-500 text-sm tabular-nums">
                     {c.cpc !== null ? `$${c.cpc.toFixed(2)}` : <span className="text-gray-300">—</span>}

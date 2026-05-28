@@ -169,7 +169,9 @@ async function upsertSpSearchTerms(db: any, pid: number, rows: any[]) {
 
 async function upsertSbCampaigns(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
-  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
+  // Omit sales_cents/orders/units — SB_CAMP doesn't report them; including 0 would overwrite sbAttr data.
+  // updateSbCampaignSales (sbAttr report) owns those columns.
+  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost) }))
   const { error } = await db.from('sb_campaigns').upsert(r, { onConflict: 'profile_id,campaign_id,date' })
   if (error) throw new Error(`sb_campaigns: ${error.message}`)
   return r.length
@@ -610,8 +612,14 @@ Deno.serve(async (req) => {
     const amazonPid = String(profile.profile_id)
 
     // Check all report statuses in parallel (single round, no loop)
-    // Count reports that were never submitted (null) — these will be reflected in final status
-    const skippedReports = Object.entries(ids).filter(([k]) => !['startDate','endDate'].includes(k) && !ids[k]).length
+    // SB sub-reports (sbAttr, sbKw, sbSt) are optional — Amazon throttles them independently.
+    // Missing any of these doesn't warrant 'partial'; prior data stays intact via upsert.
+    const OPTIONAL_REPORTS = ['sbAttr', 'sbKw', 'sbSt']
+    for (const name of OPTIONAL_REPORTS) {
+      if (!ids[name]) console.log(`[poll] ${name} skipped (Amazon throttle) — prior data preserved`)
+    }
+    const skippedReports = Object.entries(ids)
+      .filter(([k]) => !['startDate', 'endDate', ...OPTIONAL_REPORTS].includes(k) && !ids[k]).length
     if (skippedReports > 0) console.log(`[poll] ${skippedReports} report(s) were skipped at submission time (throttled)`)
 
     const reportEntries = Object.entries(ids).filter(([k]) => !['startDate','endDate'].includes(k) && ids[k])
@@ -631,7 +639,12 @@ Deno.serve(async (req) => {
     )
 
     const allDone   = statuses.every(s => s.status === 'COMPLETED' || s.status === 'FAILED')
-    const anyFailed = statuses.some(s => s.status === 'FAILED')
+    // Optional SB sub-reports — treat FAILED the same as null (don't mark partial for them)
+    const anyFailed = statuses.some(s => s.status === 'FAILED' && !OPTIONAL_REPORTS.includes(s.name))
+    for (const s of statuses) {
+      if (OPTIONAL_REPORTS.includes(s.name) && s.status === 'FAILED')
+        console.log(`[poll] ${s.name} FAILED on Amazon side — prior data preserved`)
+    }
     const completed = statuses.filter(s => s.status === 'COMPLETED')
 
     if (!allDone) {

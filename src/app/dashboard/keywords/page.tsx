@@ -17,18 +17,19 @@ function acosColor(acos: number | null) {
 export default async function KeywordsPage({
   searchParams,
 }: {
-  searchParams: { profile_id?: string; days?: string; filter?: string }
+  searchParams: { profile_id?: string; days?: string; filter?: string; adType?: string }
 }) {
-  const supabase   = await createClient()
+  const supabase  = await createClient()
   const { data: profiles } = await supabase
     .from('amazon_profiles')
     .select('profile_id, account_name, marketplace')
     .order('created_at')
     .limit(10)
-  const usProfile  = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
-  const profileId  = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
-  const days       = Number(searchParams.days ?? 30)
-  const filter     = searchParams.filter ?? 'all'
+  const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
+  const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
+  const days      = Number(searchParams.days ?? 30)
+  const filter    = searchParams.filter ?? 'all'
+  const adType    = (searchParams.adType ?? 'sp') as 'sp' | 'sb'
 
   const startDate = new Date()
   startDate.setDate(startDate.getDate() - days)
@@ -36,9 +37,11 @@ export default async function KeywordsPage({
 
   const activeProfileId = profileId ?? (profiles as any)?.[0]?.profile_id ?? null
 
+  const table = adType === 'sb' ? 'sb_keywords' : 'sp_keywords'
+
   const { data: keywords } = activeProfileId
     ? await supabase
-        .from('sp_keywords')
+        .from(table)
         .select('keyword_id, keyword_text, match_type, state, bid_cents, impressions, clicks, spend_cents, sales_cents, orders, date')
         .eq('profile_id', activeProfileId)
         .gte('date', startStr)
@@ -69,7 +72,6 @@ export default async function KeywordsPage({
 
   let rows = Array.from(kwMap.values())
 
-  // Apply filter
   if (filter === 'zero_impressions') {
     rows = rows.filter(r => r.impressions === 0 && r.state === 'enabled')
   } else if (filter === 'zero_sales') {
@@ -77,24 +79,56 @@ export default async function KeywordsPage({
   }
 
   const filters = [
-    { key: 'all',             label: 'All Keywords' },
+    { key: 'all',              label: 'All Keywords' },
     { key: 'zero_impressions', label: 'Zero Impressions' },
     { key: 'zero_sales',       label: 'No Sales (>$10 spend)' },
   ]
 
+  const buildUrl = (params: Record<string, string | undefined>) => {
+    const base: Record<string, string | undefined> = {
+      profile_id: String(activeProfileId),
+      days:       String(days),
+      filter,
+      adType,
+      ...params,
+    }
+    const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('&')
+    return `/dashboard/keywords?${qs}`
+  }
+
   return (
     <div className="space-y-6">
+
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Keywords</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Sponsored Products keyword performance · Last {days} days</p>
+          <p className="text-sm text-gray-400 mt-0.5">
+            {adType === 'sb' ? 'Sponsored Brands' : 'Sponsored Products'} keyword performance · Last {days} days
+          </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* SP / SB toggle */}
+          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
+            {(['sp', 'sb'] as const).map(t => (
+              <Link
+                key={t}
+                href={buildUrl({ adType: t })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  adType === t
+                    ? t === 'sp' ? 'bg-blue-500 text-white' : 'bg-purple-500 text-white'
+                    : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+                }`}
+              >
+                {t.toUpperCase()}
+              </Link>
+            ))}
+          </div>
+          {/* Day range */}
           {[7, 14, 30, 90].map(d => (
             <Link
               key={d}
-              href={`/dashboard/keywords?profile_id=${activeProfileId}&days=${d}&filter=${filter}`}
+              href={buildUrl({ days: String(d) })}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
                 days === d ? 'bg-orange-500 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-orange-300'
               }`}
@@ -110,7 +144,7 @@ export default async function KeywordsPage({
         {filters.map(f => (
           <Link
             key={f.key}
-            href={`/dashboard/keywords?profile_id=${activeProfileId}&days=${days}&filter=${f.key}`}
+            href={buildUrl({ filter: f.key })}
             className={`px-3.5 py-1.5 rounded-full text-xs font-medium transition-all ${
               filter === f.key
                 ? 'bg-orange-100 text-orange-700 border border-orange-200'
@@ -126,7 +160,7 @@ export default async function KeywordsPage({
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         {rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
-            <p className="text-gray-400 text-sm">No keyword data yet.</p>
+            <p className="text-gray-400 text-sm">No {adType.toUpperCase()} keyword data yet.</p>
             <p className="text-gray-400 text-xs mt-1">Run a sync from the Overview page to load your keyword data.</p>
           </div>
         ) : (
@@ -180,6 +214,7 @@ export default async function KeywordsPage({
           </div>
         )}
       </div>
+
     </div>
   )
 }

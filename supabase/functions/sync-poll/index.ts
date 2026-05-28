@@ -622,9 +622,11 @@ Deno.serve(async (req) => {
     for (const name of OPTIONAL_REPORTS) {
       if (!ids[name]) console.log(`[poll] ${name} skipped (Amazon throttle) — prior data preserved`)
     }
-    const skippedReports = Object.entries(ids)
-      .filter(([k]) => !['startDate', 'endDate', ...OPTIONAL_REPORTS].includes(k) && !ids[k]).length
-    if (skippedReports > 0) console.log(`[poll] ${skippedReports} report(s) were skipped at submission time (throttled)`)
+    const skippedNames = Object.entries(ids)
+      .filter(([k]) => !['startDate', 'endDate', ...OPTIONAL_REPORTS].includes(k) && !ids[k])
+      .map(([k]) => k)
+    const skippedReports = skippedNames.length
+    if (skippedReports > 0) console.log(`[poll] NON-OPTIONAL skipped at submission: ${skippedNames.join(', ')} — will cause partial`)
 
     const reportEntries = Object.entries(ids).filter(([k]) => !['startDate','endDate'].includes(k) && ids[k])
 
@@ -646,8 +648,12 @@ Deno.serve(async (req) => {
     // Optional SB sub-reports — treat FAILED the same as null (don't mark partial for them)
     const anyFailed = statuses.some(s => s.status === 'FAILED' && !OPTIONAL_REPORTS.includes(s.name))
     for (const s of statuses) {
-      if (OPTIONAL_REPORTS.includes(s.name) && s.status === 'FAILED')
-        console.log(`[poll] ${s.name} FAILED on Amazon side — prior data preserved`)
+      if (s.status === 'FAILED') {
+        if (OPTIONAL_REPORTS.includes(s.name))
+          console.log(`[poll] ${s.name} FAILED (optional) — prior data preserved`)
+        else
+          console.log(`[poll] ${s.name} FAILED (NON-OPTIONAL) — will cause partial`)
+      }
     }
     const completed = statuses.filter(s => s.status === 'COMPLETED')
 
@@ -692,20 +698,28 @@ Deno.serve(async (req) => {
       })
     )
 
+    // Log downloaded row counts before upsert
+    for (const [name, rows] of Object.entries(dataMap)) {
+      console.log(`[poll] downloaded ${name}: ${rows.length} rows`)
+    }
+
     let spTotal = 0, sbTotal = 0, sdTotal = 0
 
-    spTotal += await upsertSpCampaigns(db,  pid, dataMap['spCamp'] ?? [])
-    spTotal += await upsertSpKeywords(db,   pid, dataMap['spKw']   ?? [])
-    spTotal += await upsertSpSearchTerms(db,pid, dataMap['spSt']   ?? [])
-    sbTotal += await upsertSbCampaigns(db,  pid, dataMap['sbCamp'] ?? [])
-    sbTotal += await upsertSbKeywords(db,   pid, dataMap['sbKw']   ?? [])
-    sbTotal += await upsertSbSearchTerms(db,pid, dataMap['sbSt']   ?? [])
+    const spCampN = await upsertSpCampaigns(db,  pid, dataMap['spCamp'] ?? []); spTotal += spCampN
+    const spKwN   = await upsertSpKeywords(db,   pid, dataMap['spKw']   ?? []); spTotal += spKwN
+    const spStN   = await upsertSpSearchTerms(db,pid, dataMap['spSt']   ?? []); spTotal += spStN
+    const sbCampN = await upsertSbCampaigns(db,  pid, dataMap['sbCamp'] ?? []); sbTotal += sbCampN
+    const sbKwN   = await upsertSbKeywords(db,   pid, dataMap['sbKw']   ?? []); sbTotal += sbKwN
+    const sbStN   = await upsertSbSearchTerms(db,pid, dataMap['sbSt']   ?? []); sbTotal += sbStN
     // sbAttr: aggregate purchased-product rows by campaign+date, UPDATE (or INSERT) sb_campaigns sales/orders
-    sbTotal += await updateSbCampaignSales(db, pid, dataMap['sbAttr'] ?? [], dataMap['sbCamp'] ?? [])
-    sdTotal += await upsertSdCampaigns(db,  pid, dataMap['sdCamp'] ?? [])
+    const sbAttrN = await updateSbCampaignSales(db, pid, dataMap['sbAttr'] ?? [], dataMap['sbCamp'] ?? []); sbTotal += sbAttrN
+    const sdCampN = await upsertSdCampaigns(db,  pid, dataMap['sdCamp'] ?? []); sdTotal += sdCampN
 
     const total = spTotal + sbTotal + sdTotal
+    console.log(`[poll] upserted — spCamp:${spCampN} spKw:${spKwN} spSt:${spStN} sbCamp:${sbCampN} sbKw:${sbKwN} sbSt:${sbStN} sbAttr:${sbAttrN} sdCamp:${sdCampN}`)
     console.log(`[poll] Records by type — SP: ${spTotal}, SB: ${sbTotal}, SD: ${sdTotal}, Total: ${total}`)
+    if (anyFailed || skippedReports > 0)
+      console.log(`[poll] PARTIAL cause — anyFailed=${anyFailed} skippedNonOptional=${skippedReports} (${skippedNames.join(',')})`)
 
     await db.from('amazon_profiles').update({ last_sync_at: new Date().toISOString() }).eq('profile_id', pid)
     await db.from('sync_logs').update({

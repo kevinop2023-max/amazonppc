@@ -63,30 +63,53 @@ export default async function CampaignsPage({
   if (!profileId) return <p className="text-sm text-gray-500 p-6">No Amazon account connected.</p>
 
   async function fetchCampaigns(table: 'sp_campaigns' | 'sb_campaigns' | 'sd_campaigns', adType: string) {
-    let q = supabase
-      .from(table)
-      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
-      .eq('profile_id', profileId!)
-      .gte('date', startStr)
-      .lte('date', endStr)
-      .range(0, 49999)
-    if (state) q = q.eq('state', state)
-    const { data } = await q
+    // Two parallel queries: meta (all-time, for current state) + perf (date-range only)
+    // Paused/archived campaigns have no rows in recent date ranges, so state must be
+    // resolved from the most recent historical row, not filtered in the perf query.
+    const [{ data: metaRows }, { data: perfRows }] = await Promise.all([
+      supabase
+        .from(table)
+        .select('campaign_id, campaign_name, state, daily_budget_cents')
+        .eq('profile_id', profileId!)
+        .order('date', { ascending: false })
+        .range(0, 49999),
+      supabase
+        .from(table)
+        .select('campaign_id, spend_cents, sales_cents, orders, impressions, clicks')
+        .eq('profile_id', profileId!)
+        .gte('date', startStr)
+        .lte('date', endStr)
+        .range(0, 49999),
+    ])
 
-    const map = new Map<number, { campaign_id: number; name: string; state: string; ad_type: string; budget: number | null; spend: number; sales: number; orders: number; impressions: number; clicks: number }>()
-    for (const r of data ?? []) {
-      if (!map.has(r.campaign_id)) {
-        map.set(r.campaign_id, { campaign_id: r.campaign_id, name: r.campaign_name, state: r.state, ad_type: adType, budget: 0, spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 })
+    // Most-recent state/name/budget per campaign (metaRows ordered date DESC)
+    const metaMap = new Map<number, { name: string; state: string; budget: number | null }>()
+    for (const r of metaRows ?? []) {
+      if (!metaMap.has(r.campaign_id)) {
+        metaMap.set(r.campaign_id, { name: r.campaign_name, state: r.state, budget: r.daily_budget_cents })
       }
-      const c = map.get(r.campaign_id)!
-      c.spend       += r.spend_cents
-      c.sales       += r.sales_cents
-      c.orders      += r.orders
-      c.impressions += r.impressions
-      c.clicks      += r.clicks
-      if ((r.daily_budget_cents ?? 0) > (c.budget ?? 0)) c.budget = r.daily_budget_cents
     }
-    return Array.from(map.values())
+
+    // Aggregate performance within selected date range
+    const perfMap = new Map<number, { spend: number; sales: number; orders: number; impressions: number; clicks: number }>()
+    for (const r of perfRows ?? []) {
+      if (!perfMap.has(r.campaign_id)) {
+        perfMap.set(r.campaign_id, { spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 })
+      }
+      const p = perfMap.get(r.campaign_id)!
+      p.spend       += r.spend_cents
+      p.sales       += r.sales_cents
+      p.orders      += r.orders
+      p.impressions += r.impressions
+      p.clicks      += r.clicks
+    }
+
+    return Array.from(metaMap.entries())
+      .filter(([, m]) => !state || m.state === state)
+      .map(([id, m]) => {
+        const p = perfMap.get(id) ?? { spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 }
+        return { campaign_id: id, name: m.name, state: m.state, ad_type: adType, budget: m.budget, ...p }
+      })
   }
 
   const results = await Promise.all([

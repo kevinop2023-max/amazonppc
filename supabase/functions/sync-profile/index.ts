@@ -235,10 +235,9 @@ Deno.serve(async (req) => {
     // SB spend/clicks report — sales columns not supported at campaign level
     const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
     // SB_KW: sales columns not supported by sbTargeting in v3 — media metrics only.
-    // NOTE: 'keyword' (text) is not a valid column for sbTargeting — Amazon rejects the request.
-    // Keyword text is unavailable in the SB reporting API; only keywordId is returned.
-    const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
-    const SB_ST   = ['date','campaignId','adGroupId','customerSearchTerm','searchTerm','query','targeting','impressions','clicks','cost']
+    // SB keyword text column is 'keywordText' (not 'keyword' which is SP-specific)
+    const SB_KW   = ['date','campaignId','adGroupId','keywordId','keywordText','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
+    const SB_ST   = ['date','campaignId','adGroupId','searchTerm','matchType','keywordId','impressions','clicks','cost','purchases','sales','unitsSold']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
     const SB_ATTR = ['date','campaignId','sales14d','orders14d']
     // SD campaign report — purchases14d/sales14d not supported; spend/traffic only

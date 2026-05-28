@@ -123,7 +123,7 @@ async function recordBidHistory(db: any, pid: number, rows: any[], adType: 'sp' 
     if (!kwId) continue
     const bid = toCents(r.keywordBid)
     if (bid > 0 && !bidMap.has(kwId)) {
-      bidMap.set(kwId, { bid, text: r.keyword ?? '', match: (r.matchType ?? 'broad').toLowerCase(), cid: n(r.campaignId) })
+      bidMap.set(kwId, { bid, text: r.keywordText ?? r.keyword ?? '', match: (r.matchType ?? 'broad').toLowerCase(), cid: n(r.campaignId) })
     }
   }
   if (!bidMap.size) return
@@ -178,7 +178,8 @@ async function upsertSbCampaigns(db: any, pid: number, rows: any[]) {
 }
 
 async function upsertSbKeywords(db: any, pid: number, rows: any[]) {
-  const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, keyword_text: r.keyword ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
+  // SB keyword text is 'keywordText' in v3 (not 'keyword' which is SP-specific)
+  const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, keyword_text: r.keywordText ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
   if (!r.length) return 0
   const { error } = await db.from('sb_keywords').upsert(r, { onConflict: 'profile_id,keyword_id,date' })
   if (error) throw new Error(`sb_keywords: ${error.message}`)
@@ -191,15 +192,17 @@ async function upsertSbSearchTerms(db: any, pid: number, rows: any[]) {
   const map = new Map<string, any>()
   for (const r of rows) {
     const adGrp = r.adGroupId ? n(r.adGroupId) : null
-    const term = r.customerSearchTerm ?? r.searchTerm ?? r.query ?? r.targeting ?? ''
+    // SB search term report uses 'searchTerm' (confirmed from Amazon v3 API docs)
+    // SB uses 'sales'/'purchases' (not 'sales14d'/'purchases14d' which are SP fields)
+    const term = r.searchTerm ?? ''
     const key = `${n(r.campaignId)}|${adGrp}|${r.date}|${term}`
     const ex = map.get(key)
     if (ex) {
       ex.impressions += n(r.impressions); ex.clicks += n(r.clicks)
-      ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales14d)
-      ex.orders += n(r.purchases14d); ex.units += n(r.unitsSoldClicks14d)
+      ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales)
+      ex.orders += n(r.purchases); ex.units += n(r.unitsSold)
     } else {
-      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: term, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
+      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: term, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales), orders: n(r.purchases), units: n(r.unitsSold) })
     }
   }
   const deduped = [...map.values()]

@@ -94,6 +94,79 @@ async function createReport(token: string, pid: string, name: string, adProduct:
   console.error(`[sync] Skip ${name}: exhausted retries`); return null
 }
 
+// ── Campaign state snapshot ───────────────────────────────────────────────────
+// Performance reports only include campaigns with activity (spend/impressions).
+// Paused/archived campaigns never appear in reports, so their state would never
+// be stored in the DB and the state filter would always show 0 for those states.
+// This function calls the Amazon campaign list API to store the CURRENT state of
+// ALL campaigns (including paused/archived) for today's date. Today's date is
+// after endStr (= yesterday), so it is excluded from performance aggregations
+// but included in the meta (all-time) query used for state filtering.
+async function syncCampaignStates(token: string, pid: string, db: any, numericPid: number) {
+  const today = new Date().toISOString().split('T')[0]
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
+    'Amazon-Advertising-API-Scope': pid,
+  }
+
+  async function listAll(path: string): Promise<any[]> {
+    const all: any[] = []
+    let startIndex = 0
+    for (let page = 0; page < 20; page++) {  // max 2000 campaigns
+      const res = await fetch(
+        `${AMAZON_ADS_BASE}${path}?stateFilter=enabled,paused,archived&count=100&startIndex=${startIndex}`,
+        { headers: h }
+      )
+      if (!res.ok) { console.log(`[sync] campaign-states ${path}: HTTP ${res.status}`); break }
+      const data = await res.json()
+      if (!Array.isArray(data) || !data.length) break
+      all.push(...data)
+      if (data.length < 100) break
+      startIndex += 100
+    }
+    return all
+  }
+
+  const [sp, sb, sd] = await Promise.all([
+    listAll('/v2/sp/campaigns').catch(e => { console.log(`[sync] sp-list: ${e}`); return [] }),
+    listAll('/sb/campaigns').catch(e    => { console.log(`[sync] sb-list: ${e}`); return [] }),
+    listAll('/sd/campaigns').catch(e    => { console.log(`[sync] sd-list: ${e}`); return [] }),
+  ])
+
+  const upsert = async (table: string, rows: object[]) => {
+    if (!rows.length) return
+    // ignoreDuplicates: true → DO NOTHING on conflict, so existing perf data is not overwritten with 0s
+    const { error } = await (db as any).from(table).upsert(rows, { onConflict: 'profile_id,campaign_id,date', ignoreDuplicates: true })
+    if (error) console.log(`[sync] ${table} state-upsert: ${error.message}`)
+    else console.log(`[sync] campaign-states ${table}: ${rows.length} rows`)
+  }
+
+  const state = (v: any) => String(v ?? 'enabled').toLowerCase()
+  const budget = (v: any) => v ? Math.round(Number(v) * 100) : 0
+
+  await Promise.all([
+    upsert('sp_campaigns', sp.map(c => ({
+      profile_id: numericPid, campaign_id: Number(c.campaignId), date: today,
+      campaign_name: c.name ?? '', state: state(c.state),
+      daily_budget_cents: budget(c.dailyBudget),
+      impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0, units: 0,
+    }))),
+    upsert('sb_campaigns', sb.map(c => ({
+      profile_id: numericPid, campaign_id: Number(c.campaignId), date: today,
+      campaign_name: c.name ?? '', state: state(c.state),
+      daily_budget_cents: budget(c.dailyBudget),
+      impressions: 0, clicks: 0, spend_cents: 0,
+    }))),
+    upsert('sd_campaigns', sd.map(c => ({
+      profile_id: numericPid, campaign_id: Number(c.campaignId), date: today,
+      campaign_name: c.name ?? '', state: state(c.state),
+      daily_budget_cents: budget(c.dailyBudget),
+      impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0, units: 0,
+    }))),
+  ])
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -146,6 +219,14 @@ Deno.serve(async (req) => {
     }
 
     const pid = String(profile.profile_id)
+
+    // Snapshot current campaign states (enabled/paused/archived) from the campaign
+    // list API. Non-fatal — if it fails, the rest of the sync continues normally.
+    try {
+      await syncCampaignStates(token, pid, db, profile.profile_id)
+    } catch (e) {
+      console.log(`[sync] campaign-states skipped: ${e}`)
+    }
 
     // Column definitions
     const SP_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']

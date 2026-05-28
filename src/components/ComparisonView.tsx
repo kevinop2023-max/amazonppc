@@ -1183,8 +1183,11 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
         />
       </div>
 
-      {/* Performance Chart */}
-      <PerformanceChart dataA={chartDataA} dataB={chartDataB} labelA={labelA} labelB={labelB} />
+      {/* Performance Charts — Period A and Period B side by side */}
+      <div className="grid grid-cols-2 gap-4">
+        <PerformanceChart data={chartDataA} title={`Period A: ${labelA}`} />
+        <PerformanceChart data={chartDataB} title={`Period B: ${labelB}`} />
+      </div>
 
       {/* Tabs */}
       <div className="border-b border-gray-100">

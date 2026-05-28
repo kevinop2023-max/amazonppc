@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import ComparisonView from '@/components/ComparisonView'
 import type { CampComp, TermComp, KwComp, BidRecord } from '@/components/ComparisonView'
+import type { DayData } from '@/components/PerformanceChart'
 
 export const revalidate = 0
 
@@ -41,16 +42,16 @@ export default async function ComparisonPage({
   // 12 parallel queries (last one fetches earliest date for "All Time" button)
   const [spARes, spBRes, sbARes, sbBRes, stARes, stBRes, spKwARes, spKwBRes, sbKwARes, sbKwBRes, bidHistRes, earliestRes] = await Promise.all([
     supabase.from('sp_campaigns')
-      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks, date')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sp_campaigns')
-      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks, date')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sb_campaigns')
-      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks, date')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sb_campaigns')
-      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks')
+      .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks, date')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sp_search_terms')
       .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks, impressions')
@@ -128,6 +129,35 @@ export default async function ComparisonPage({
   mergeCamps(spAMap, spBMap, 'SP')
   mergeCamps(sbAMap, sbBMap, 'SB')
   camps.sort((a, b) => b.bSpend - a.bSpend)
+
+  // Daily chart data (SP + SB combined, grouped by date)
+  function aggDailyMap(rows: any[]) {
+    const map = new Map<string, { spend: number; sales: number; orders: number; clicks: number }>()
+    for (const r of rows) {
+      const d = r.date ?? ''; if (!d) continue
+      if (!map.has(d)) map.set(d, { spend: 0, sales: 0, orders: 0, clicks: 0 })
+      const m = map.get(d)!
+      m.spend  += n(r.spend_cents)
+      m.sales  += n(r.sales_cents)
+      m.orders += n(r.orders)
+      m.clicks += n(r.clicks)
+    }
+    return map
+  }
+
+  function mergeDailyMaps(mapSp: Map<string, any>, mapSb: Map<string, any>): DayData[] {
+    const dates = new Set([...mapSp.keys(), ...mapSb.keys()])
+    return [...dates].sort().map(date => ({
+      date,
+      spendCents: (mapSp.get(date)?.spend ?? 0) + (mapSb.get(date)?.spend ?? 0),
+      salesCents: (mapSp.get(date)?.sales ?? 0) + (mapSb.get(date)?.sales ?? 0),
+      orders:     (mapSp.get(date)?.orders ?? 0) + (mapSb.get(date)?.orders ?? 0),
+      clicks:     (mapSp.get(date)?.clicks ?? 0) + (mapSb.get(date)?.clicks ?? 0),
+    }))
+  }
+
+  const chartDataA = mergeDailyMaps(aggDailyMap(spARes.data ?? []), aggDailyMap(sbARes.data ?? []))
+  const chartDataB = mergeDailyMaps(aggDailyMap(spBRes.data ?? []), aggDailyMap(sbBRes.data ?? []))
 
   // Build campaign name lookup (id → name) for search terms
   const campNameMap = new Map<number, string>()
@@ -246,6 +276,8 @@ export default async function ComparisonPage({
       terms={terms}
       keywords={keywords}
       earliestDate={earliestDate}
+      chartDataA={chartDataA}
+      chartDataB={chartDataB}
     />
   )
 }

@@ -2,6 +2,8 @@
 
 import React, { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import PerformanceChart from './PerformanceChart'
+import type { DayData } from './PerformanceChart'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +37,8 @@ interface Props {
   terms: TermComp[]
   keywords: KwComp[]
   earliestDate: string | null
+  chartDataA: DayData[]
+  chartDataB: DayData[]
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1016,7 +1020,7 @@ function OverlapTab({ keywords, terms }: { keywords: KwComp[]; terms: TermComp[]
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms, keywords, earliestDate }: Props) {
+export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms, keywords, earliestDate, chartDataA, chartDataB }: Props) {
   const router = useRouter()
   const [tab, setTab] = useState<'overview' | 'campaigns' | 'search-terms' | 'keywords' | 'overlap'>('campaigns')
   const [as, setAs] = useState(aStart); const [ae, setAe] = useState(aEnd)
@@ -1178,6 +1182,9 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
           lowerIsBetter={false}
         />
       </div>
+
+      {/* Performance Chart */}
+      <PerformanceChart dataA={chartDataA} dataB={chartDataB} labelA={labelA} labelB={labelB} />
 
       {/* Tabs */}
       <div className="border-b border-gray-100">

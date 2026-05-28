@@ -238,7 +238,7 @@ Deno.serve(async (req) => {
     // NOTE: 'keyword' (text) is not a valid column for sbTargeting — Amazon rejects the request.
     // Keyword text is unavailable in the SB reporting API; only keywordId is returned.
     const SB_KW   = ['date','campaignId','adGroupId','keywordId','matchType','adKeywordStatus','keywordBid','impressions','clicks','cost']
-    const SB_ST   = ['date','campaignId','adGroupId','searchTerm','query','targeting','impressions','clicks','cost']
+    const SB_ST   = ['date','campaignId','adGroupId','customerSearchTerm','searchTerm','query','targeting','impressions','clicks','cost']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
     const SB_ATTR = ['date','campaignId','sales14d','orders14d']
     // SD campaign report — purchases14d/sales14d not supported; spend/traffic only

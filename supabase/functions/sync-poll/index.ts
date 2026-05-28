@@ -191,7 +191,7 @@ async function upsertSbSearchTerms(db: any, pid: number, rows: any[]) {
   const map = new Map<string, any>()
   for (const r of rows) {
     const adGrp = r.adGroupId ? n(r.adGroupId) : null
-    const term = r.searchTerm ?? r.query ?? r.targeting ?? ''
+    const term = r.customerSearchTerm ?? r.searchTerm ?? r.query ?? r.targeting ?? ''
     const key = `${n(r.campaignId)}|${adGrp}|${r.date}|${term}`
     const ex = map.get(key)
     if (ex) {

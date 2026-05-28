@@ -37,12 +37,14 @@ export default async function KeywordsPage({
 
   const activeProfileId = profileId ?? (profiles as any)?.[0]?.profile_id ?? null
 
-  const table = adType === 'sb' ? 'sb_keywords' : 'sp_keywords'
+  const kwTable   = adType === 'sb' ? 'sb_keywords'  : 'sp_keywords'
+  const campTable = adType === 'sb' ? 'sb_campaigns' : 'sp_campaigns'
 
+  // Round 1: keyword rows (add campaign_id for grouping)
   const { data: keywords } = activeProfileId
     ? await supabase
-        .from(table)
-        .select('keyword_id, keyword_text, match_type, state, bid_cents, impressions, clicks, spend_cents, sales_cents, orders, date')
+        .from(kwTable)
+        .select('keyword_id, campaign_id, keyword_text, match_type, state, bid_cents, impressions, clicks, spend_cents, sales_cents, orders, date')
         .eq('profile_id', activeProfileId)
         .gte('date', startStr)
         .order('spend_cents', { ascending: false })
@@ -55,6 +57,7 @@ export default async function KeywordsPage({
     if (!kwMap.has(row.keyword_id)) {
       kwMap.set(row.keyword_id, {
         keyword_id:   row.keyword_id,
+        campaign_id:  row.campaign_id,
         keyword_text: row.keyword_text,
         match_type:   row.match_type,
         state:        row.state,
@@ -72,11 +75,42 @@ export default async function KeywordsPage({
 
   let rows = Array.from(kwMap.values())
 
-  if (filter === 'zero_impressions') {
-    rows = rows.filter(r => r.impressions === 0 && r.state === 'enabled')
-  } else if (filter === 'zero_sales') {
-    rows = rows.filter(r => r.sales_cents === 0 && r.spend_cents > 1000)
+  // Apply filter
+  if (filter === 'zero_impressions') rows = rows.filter(r => r.impressions === 0 && r.state === 'enabled')
+  else if (filter === 'zero_sales')  rows = rows.filter(r => r.sales_cents === 0 && r.spend_cents > 1000)
+
+  // Round 2: fetch campaign names for the found campaign IDs
+  const campIds = [...new Set(rows.map(r => r.campaign_id).filter(Boolean))]
+  const { data: campRows } = campIds.length > 0
+    ? await supabase
+        .from(campTable)
+        .select('campaign_id, campaign_name')
+        .eq('profile_id', activeProfileId)
+        .in('campaign_id', campIds)
+        .order('date', { ascending: false })
+        .range(0, 4999)
+    : { data: [] as { campaign_id: number; campaign_name: string }[] }
+
+  const campaignNames = new Map<number, string>()
+  for (const c of campRows ?? []) {
+    if (!campaignNames.has(c.campaign_id)) campaignNames.set(c.campaign_id, c.campaign_name)
   }
+
+  // Add campaign name to each row
+  const rowsWithCampaign = rows.map(kw => ({
+    ...kw,
+    campaignName: campaignNames.get(kw.campaign_id) ?? `Campaign ${kw.campaign_id}`,
+  }))
+
+  // Group by campaign name, sort groups by total spend desc
+  const grouped = new Map<string, typeof rowsWithCampaign>()
+  for (const kw of rowsWithCampaign) {
+    if (!grouped.has(kw.campaignName)) grouped.set(kw.campaignName, [])
+    grouped.get(kw.campaignName)!.push(kw)
+  }
+  const sortedGroups = [...grouped.entries()].sort((a, b) =>
+    b[1].reduce((s, k) => s + k.spend_cents, 0) - a[1].reduce((s, k) => s + k.spend_cents, 0)
+  )
 
   const filters = [
     { key: 'all',              label: 'All Keywords' },
@@ -96,6 +130,8 @@ export default async function KeywordsPage({
     return `/dashboard/keywords?${qs}`
   }
 
+  const colCount = 10
+
   return (
     <div className="space-y-6">
 
@@ -104,7 +140,7 @@ export default async function KeywordsPage({
         <div>
           <h1 className="text-xl font-bold text-gray-900">Keywords</h1>
           <p className="text-sm text-gray-400 mt-0.5">
-            {adType === 'sb' ? 'Sponsored Brands' : 'Sponsored Products'} keyword performance · Last {days} days
+            {rows.length} keywords · {sortedGroups.length} campaign{sortedGroups.length !== 1 ? 's' : ''} · {adType === 'sb' ? 'Sponsored Brands' : 'Sponsored Products'} · Last {days} days
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -158,7 +194,7 @@ export default async function KeywordsPage({
 
       {/* Table */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        {rows.length === 0 ? (
+        {sortedGroups.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <p className="text-gray-400 text-sm">No {adType.toUpperCase()} keyword data yet.</p>
             <p className="text-gray-400 text-xs mt-1">Run a sync from the Overview page to load your keyword data.</p>
@@ -175,40 +211,58 @@ export default async function KeywordsPage({
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
-                {rows.map((kw: any) => {
-                  const acos = kw.sales_cents > 0 ? (kw.spend_cents / kw.sales_cents * 100) : null
-                  return (
-                    <tr key={kw.keyword_id} className="hover:bg-orange-50/30 transition-colors">
-                      <td className="px-4 py-3 font-medium text-gray-900 max-w-[260px] truncate">{kw.keyword_text}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                          kw.match_type === 'exact'  ? 'bg-blue-50 text-blue-700' :
-                          kw.match_type === 'phrase' ? 'bg-purple-50 text-purple-700' :
-                                                       'bg-gray-100 text-gray-600'
-                        }`}>
-                          {kw.match_type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                          kw.state === 'enabled' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
-                        }`}>
-                          {kw.state}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-700">{kw.bid_cents ? fmt$(kw.bid_cents) : '—'}</td>
-                      <td className="px-4 py-3 text-gray-700">{kw.impressions.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-gray-700">{kw.clicks.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-gray-700">{fmt$(kw.spend_cents)}</td>
-                      <td className="px-4 py-3 text-gray-700">{fmt$(kw.sales_cents)}</td>
-                      <td className="px-4 py-3 text-gray-700">{kw.orders}</td>
-                      <td className={`px-4 py-3 ${acosColor(acos)}`}>
-                        {acos !== null ? acos.toFixed(1) + '%' : '—'}
+              <tbody>
+                {sortedGroups.map(([campaignName, groupKws]) => (
+                  <>
+                    {/* Campaign section header */}
+                    <tr key={`h-${campaignName}`} className="bg-gray-50 border-y border-gray-100">
+                      <td colSpan={colCount} className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide truncate">{campaignName}</span>
+                          <span className="text-[10px] text-gray-400 shrink-0 bg-gray-200 rounded px-1.5 py-0.5">
+                            {groupKws.length}
+                          </span>
+                        </div>
                       </td>
                     </tr>
-                  )
-                })}
+                    {/* Keyword rows */}
+                    {groupKws.map((kw: any) => {
+                      const acos = kw.sales_cents > 0 ? (kw.spend_cents / kw.sales_cents * 100) : null
+                      return (
+                        <tr key={kw.keyword_id} className="border-b border-gray-50 last:border-0 hover:bg-orange-50/30 transition-colors">
+                          <td className="py-3 font-medium text-gray-900 max-w-[260px]">
+                            <span className="block truncate pl-8 pr-4">{kw.keyword_text}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              kw.match_type === 'exact'  ? 'bg-blue-50 text-blue-700' :
+                              kw.match_type === 'phrase' ? 'bg-purple-50 text-purple-700' :
+                                                           'bg-gray-100 text-gray-600'
+                            }`}>
+                              {kw.match_type}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              kw.state === 'enabled' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
+                            }`}>
+                              {kw.state}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-gray-700">{kw.bid_cents ? fmt$(kw.bid_cents) : '—'}</td>
+                          <td className="px-4 py-3 text-gray-700">{kw.impressions.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-gray-700">{kw.clicks.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-gray-700">{fmt$(kw.spend_cents)}</td>
+                          <td className="px-4 py-3 text-gray-700">{fmt$(kw.sales_cents)}</td>
+                          <td className="px-4 py-3 text-gray-700">{kw.orders}</td>
+                          <td className={`px-4 py-3 ${acosColor(acos)}`}>
+                            {acos !== null ? acos.toFixed(1) + '%' : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </>
+                ))}
               </tbody>
             </table>
           </div>

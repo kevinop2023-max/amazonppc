@@ -188,6 +188,8 @@ async function upsertSbKeywords(db: any, pid: number, rows: any[]) {
 
 async function upsertSbSearchTerms(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
+  console.log('[poll] sbSt first row keys:', Object.keys(rows[0]))
+  console.log('[poll] sbSt first row sample:', JSON.stringify(rows[0]))
   const map = new Map<string, any>()
   for (const r of rows) {
     const adGrp = r.adGroupId ? n(r.adGroupId) : null

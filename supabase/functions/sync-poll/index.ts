@@ -188,19 +188,18 @@ async function upsertSbKeywords(db: any, pid: number, rows: any[]) {
 
 async function upsertSbSearchTerms(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
-  console.log('[poll] sbSt first row keys:', Object.keys(rows[0]))
-  console.log('[poll] sbSt first row sample:', JSON.stringify(rows[0]))
   const map = new Map<string, any>()
   for (const r of rows) {
     const adGrp = r.adGroupId ? n(r.adGroupId) : null
-    const key = `${n(r.campaignId)}|${adGrp}|${r.date}|${r.targeting ?? ''}`
+    const term = r.searchTerm ?? r.query ?? r.targeting ?? ''
+    const key = `${n(r.campaignId)}|${adGrp}|${r.date}|${term}`
     const ex = map.get(key)
     if (ex) {
       ex.impressions += n(r.impressions); ex.clicks += n(r.clicks)
       ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales14d)
       ex.orders += n(r.purchases14d); ex.units += n(r.unitsSoldClicks14d)
     } else {
-      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: r.targeting ?? '', impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
+      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: term, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
     }
   }
   const deduped = [...map.values()]

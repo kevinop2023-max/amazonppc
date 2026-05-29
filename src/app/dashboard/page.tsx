@@ -59,7 +59,7 @@ function agg(rows: CampRow[]) {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: { profile_id?: string; days?: string; start?: string; end?: string; amazon_connected?: string; amazon_error?: string }
+  searchParams: { profile_id?: string; days?: string; start?: string; end?: string; amazon_connected?: string; amazon_error?: string; }
 }) {
   const supabase = await createClient()
 
@@ -74,9 +74,10 @@ export default async function DashboardPage({
     ? Number(searchParams.profile_id)
     : (usProfile ?? profiles?.[0])?.profile_id ?? null
 
-  const days     = Number(searchParams.days ?? 30)
-  const startStr = searchParams.start ?? dateStr(days)
-  const endStr   = searchParams.end   ?? dateStr(1)
+  const isAllTime    = searchParams.days === 'all'
+  const days         = isAllTime ? 0 : Number(searchParams.days ?? 30)
+  const startStr     = searchParams.start ?? (isAllTime ? '2020-01-01' : dateStr(days))
+  const endStr       = searchParams.end   ?? dateStr(1)
   const isCustomRange = !!(searchParams.start && searchParams.end)
 
   // Period comparison halves
@@ -207,7 +208,7 @@ export default async function DashboardPage({
   const totalCampOrders = allCamps.reduce((s, c) => s + c.orders, 0)
   const topCamps = allCamps.filter(c => c.orders > 0).sort((a, b) => b.orders - a.orders).slice(0, 10)
 
-  const dayOptions = [7, 14, 30, 60]
+  const dayOptions = [7, 14, 30, 60] as const
 
   const typeColors: Record<string, string> = {
     SP: 'bg-blue-50 text-blue-600',
@@ -223,7 +224,7 @@ export default async function DashboardPage({
           <div>
             <h1 className="text-xl font-bold text-gray-900">Overview</h1>
             <p className="text-sm text-gray-400 mt-0.5">
-              {isCustomRange ? `${startStr} — ${endStr}` : `Last ${days} days`}
+              {isAllTime ? 'All time' : isCustomRange ? `${startStr} — ${endStr}` : `Last ${days} days`}
             </p>
           </div>
           {profiles && profiles.length > 0 && (
@@ -238,7 +239,7 @@ export default async function DashboardPage({
                 key={d}
                 href={`/dashboard?profile_id=${profileId}&days=${d}`}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  !isCustomRange && days === d
+                  !isCustomRange && !isAllTime && days === d
                     ? 'bg-orange-500 text-white shadow-sm'
                     : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
                 }`}
@@ -246,6 +247,14 @@ export default async function DashboardPage({
                 {d}d
               </Link>
             ))}
+            <Link
+              href={`/dashboard?profile_id=${profileId}&days=all`}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                isAllTime ? 'bg-orange-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+              }`}
+            >
+              All
+            </Link>
           </div>
           <DateRangePicker start={startStr} end={endStr} />
         </div>

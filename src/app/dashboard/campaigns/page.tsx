@@ -51,14 +51,15 @@ export default async function CampaignsPage({
   const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id, marketplace').order('created_at').limit(10)
   const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
   const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
-  const days     = Number(searchParams.days ?? 30)
-  const type     = searchParams.type
-  const state    = searchParams.state
-  const sortKey  = (searchParams.sort ?? 'spend') as SortKey
-  const sortDir  = searchParams.dir ?? 'desc'
-  const isCustom = !!(searchParams.start && searchParams.end)
-  const startStr = searchParams.start ?? dateStr(days)
-  const endStr   = searchParams.end   ?? dateStr(1)
+  const isAllTime = searchParams.days === 'all'
+  const days      = isAllTime ? 0 : Number(searchParams.days ?? 30)
+  const type      = searchParams.type
+  const state     = searchParams.state
+  const sortKey   = (searchParams.sort ?? 'spend') as SortKey
+  const sortDir   = searchParams.dir ?? 'desc'
+  const isCustom  = !!(searchParams.start && searchParams.end)
+  const startStr  = searchParams.start ?? (isAllTime ? '2020-01-01' : dateStr(days))
+  const endStr    = searchParams.end   ?? dateStr(1)
 
   if (!profileId) return <p className="text-sm text-gray-500 p-6">No Amazon account connected.</p>
 
@@ -145,7 +146,7 @@ export default async function CampaignsPage({
       state,
       start: searchParams.start,
       end: searchParams.end,
-      days: String(days),
+      days: isAllTime ? 'all' : String(days),
       sort: sortKey,
       dir: sortDir,
       ...params,
@@ -179,7 +180,7 @@ export default async function CampaignsPage({
         <div>
           <h1 className="text-xl font-bold text-gray-900">Campaigns</h1>
           <p className="text-sm text-gray-400 mt-0.5">
-            {campaigns.length} campaigns · {isCustom ? `${startStr} – ${endStr}` : `${days}d`}
+            {campaigns.length} campaigns · {isAllTime ? 'All time' : isCustom ? `${startStr} – ${endStr}` : `${days}d`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -208,10 +209,15 @@ export default async function CampaignsPage({
             {[7, 14, 30, 60].map(d => (
               <Link key={d} href={buildUrl({ days: String(d), start: undefined, end: undefined })}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  !isCustom && days === d ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
+                  !isCustom && !isAllTime && days === d ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
                 }`}
               >{d}d</Link>
             ))}
+            <Link href={buildUrl({ days: 'all', start: undefined, end: undefined })}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                isAllTime ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >All</Link>
           </div>
           {/* Custom date range */}
           <Suspense fallback={null}>

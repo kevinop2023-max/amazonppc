@@ -1,39 +1,38 @@
+import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import DateRangePicker from '@/components/DateRangePicker'
 
 export const revalidate = 0
 
 export default async function SearchTermsPage({
   searchParams,
 }: {
-  searchParams: { profile_id?: string; days?: string; mode?: string; min_spend?: string }
+  searchParams: { profile_id?: string; days?: string; mode?: string; min_spend?: string; adType?: string; start?: string; end?: string }
 }) {
   const supabase  = await createClient()
   const { data: profiles } = await supabase.from('amazon_profiles').select('profile_id, marketplace').order('created_at').limit(10)
   const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
   const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
-  const days      = Number(searchParams.days ?? 14)
+  const isAllTime = searchParams.days === 'all'
+  const days      = isAllTime ? 0 : Number(searchParams.days ?? 30)
   const mode      = (searchParams.mode ?? 'all') as 'all' | 'wasted' | 'converters'
   const minSpend  = Number(searchParams.min_spend ?? 5)
+  const adType    = searchParams.adType ?? 'all'
+  const isCustom  = !!(searchParams.start && searchParams.end)
+  const startStr  = searchParams.start ?? (isAllTime ? '2020-01-01' : new Date(Date.now() - days * 86400000).toISOString().split('T')[0])
+  const endStr    = searchParams.end ?? new Date(Date.now() - 86400000).toISOString().split('T')[0]
 
   if (!profileId) return <p className="text-sm text-gray-500 p-6">No Amazon account connected.</p>
 
-  const startStr = new Date(Date.now() - days * 86400000).toISOString().split('T')[0]
-
   // Round 1: search term rows (include campaign_id for grouping)
   const [spRes, sbRes] = await Promise.all([
-    supabase
-      .from('sp_search_terms')
-      .select('campaign_id, customer_search_term, impressions, clicks, spend_cents, sales_cents, orders')
-      .eq('profile_id', profileId)
-      .gte('date', startStr)
-      .range(0, 49999),
-    supabase
-      .from('sb_search_terms')
-      .select('campaign_id, customer_search_term, impressions, clicks, spend_cents, sales_cents, orders')
-      .eq('profile_id', profileId)
-      .gte('date', startStr)
-      .range(0, 49999),
+    adType !== 'SB'
+      ? supabase.from('sp_search_terms').select('campaign_id, customer_search_term, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
+      : Promise.resolve({ data: [] as any[] }),
+    adType !== 'SP'
+      ? supabase.from('sb_search_terms').select('campaign_id, customer_search_term, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
+      : Promise.resolve({ data: [] as any[] }),
   ])
 
   // Aggregate by (adType, campaignId, term) — same term in different campaigns = separate rows
@@ -109,8 +108,20 @@ export default async function SearchTermsPage({
     { key: 'converters', label: 'Converters',   icon: '⭐' },
   ]
 
-  const buildUrl = (m: string) =>
-    `/dashboard/search-terms?profile_id=${profileId}&days=${days}&mode=${m}&min_spend=${minSpend}`
+  const buildUrl = (params: Record<string, string | undefined>) => {
+    const base: Record<string, string | undefined> = {
+      profile_id: String(profileId),
+      days:       isAllTime ? 'all' : String(days),
+      mode,
+      min_spend:  String(minSpend),
+      adType:     adType !== 'all' ? adType : undefined,
+      start:      searchParams.start,
+      end:        searchParams.end,
+      ...params,
+    }
+    const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('&')
+    return `/dashboard/search-terms?${qs}`
+  }
 
   const adTypeCls: Record<string, string> = {
     SP: 'bg-blue-50 text-blue-600',
@@ -125,21 +136,51 @@ export default async function SearchTermsPage({
         <div>
           <h1 className="text-xl font-bold text-gray-900">Search Terms</h1>
           <p className="text-sm text-gray-400 mt-0.5">
-            {terms.length} terms · {sortedGroups.length} campaign{sortedGroups.length !== 1 ? 's' : ''} · last {days} days · SP + SB
+            {terms.length} terms · {sortedGroups.length} campaign{sortedGroups.length !== 1 ? 's' : ''} · {isAllTime ? 'All time' : isCustom ? `${startStr} – ${endStr}` : `${days}d`} · {adType === 'all' ? 'SP + SB' : adType}
           </p>
         </div>
-        <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
-          {modes.map(m => (
-            <Link key={m.key} href={buildUrl(m.key)}
-              className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
-                mode === m.key
-                  ? 'bg-orange-500 text-white shadow-sm'
-                  : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Mode filter */}
+          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
+            {modes.map(m => (
+              <Link key={m.key} href={buildUrl({ mode: m.key })}
+                className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
+                  mode === m.key ? 'bg-orange-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+                }`}
+              >
+                <span>{m.icon}</span>{m.label}
+              </Link>
+            ))}
+          </div>
+          {/* Ad type filter */}
+          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
+            {(['all', 'SP', 'SB'] as const).map(t => (
+              <Link key={t} href={buildUrl({ adType: t === 'all' ? undefined : t })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  adType === t ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >{t === 'all' ? 'All' : t}</Link>
+            ))}
+          </div>
+          {/* Day range */}
+          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
+            {[7, 14, 30, 60].map(d => (
+              <Link key={d} href={buildUrl({ days: String(d), start: undefined, end: undefined })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  !isCustom && !isAllTime && days === d ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >{d}d</Link>
+            ))}
+            <Link href={buildUrl({ days: 'all', start: undefined, end: undefined })}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                isAllTime ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
               }`}
-            >
-              <span>{m.icon}</span>{m.label}
-            </Link>
-          ))}
+            >All</Link>
+          </div>
+          {/* Custom date range */}
+          <Suspense fallback={null}>
+            <DateRangePicker start={startStr} end={endStr} basePath="/dashboard/search-terms" />
+          </Suspense>
         </div>
       </div>
 
@@ -148,7 +189,7 @@ export default async function SearchTermsPage({
         <div className="flex items-center gap-4 bg-red-50 border border-red-200 rounded-2xl p-5">
           <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center shrink-0 text-lg">💸</div>
           <div>
-            <p className="font-bold text-red-800 text-sm">${totalWaste.toFixed(2)} wasted over {days} days</p>
+            <p className="font-bold text-red-800 text-sm">${totalWaste.toFixed(2)} wasted {isAllTime ? 'all time' : isCustom ? `${startStr} – ${endStr}` : `over ${days} days`}</p>
             <p className="text-xs text-red-600 mt-0.5">
               {terms.length} search term{terms.length !== 1 ? 's' : ''} with over ${minSpend} spend and zero sales. Add these as negative keywords.
             </p>

@@ -1,5 +1,7 @@
+import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import DateRangePicker from '@/components/DateRangePicker'
 
 export const revalidate = 0
 
@@ -17,7 +19,7 @@ function acosColor(acos: number | null) {
 export default async function KeywordsPage({
   searchParams,
 }: {
-  searchParams: { profile_id?: string; days?: string; filter?: string; adType?: string }
+  searchParams: { profile_id?: string; days?: string; filter?: string; adType?: string; state?: string; start?: string; end?: string }
 }) {
   const supabase  = await createClient()
   const { data: profiles } = await supabase
@@ -27,13 +29,14 @@ export default async function KeywordsPage({
     .limit(10)
   const usProfile = profiles?.find(p => p.marketplace === 'ATVPDKIKX0DER')
   const profileId = searchParams.profile_id ? Number(searchParams.profile_id) : (usProfile ?? profiles?.[0])?.profile_id ?? null
-  const days      = Number(searchParams.days ?? 30)
+  const isAllTime = searchParams.days === 'all'
+  const days      = isAllTime ? 0 : Number(searchParams.days ?? 30)
   const filter    = searchParams.filter ?? 'all'
   const adType    = (searchParams.adType ?? 'sp') as 'sp' | 'sb'
-
-  const startDate = new Date()
-  startDate.setDate(startDate.getDate() - days)
-  const startStr = startDate.toISOString().split('T')[0]
+  const kwState   = searchParams.state ?? 'all'
+  const isCustom  = !!(searchParams.start && searchParams.end)
+  const startStr  = searchParams.start ?? (isAllTime ? '2020-01-01' : (() => { const d = new Date(); d.setDate(d.getDate() - days); return d.toISOString().split('T')[0] })())
+  const endStr    = searchParams.end ?? new Date(Date.now() - 86400000).toISOString().split('T')[0]
 
   const activeProfileId = profileId ?? (profiles as any)?.[0]?.profile_id ?? null
 
@@ -47,6 +50,7 @@ export default async function KeywordsPage({
         .select('keyword_id, campaign_id, keyword_text, match_type, state, bid_cents, impressions, clicks, spend_cents, sales_cents, orders, date')
         .eq('profile_id', activeProfileId)
         .gte('date', startStr)
+        .lte('date', endStr)
         .order('spend_cents', { ascending: false })
         .range(0, 49999)
     : { data: [] }
@@ -75,7 +79,9 @@ export default async function KeywordsPage({
 
   let rows = Array.from(kwMap.values())
 
-  // Apply filter
+  // Apply state filter
+  if (kwState !== 'all') rows = rows.filter(r => r.state === kwState)
+  // Apply keyword filter
   if (filter === 'zero_impressions') rows = rows.filter(r => r.impressions === 0 && r.state === 'enabled')
   else if (filter === 'zero_sales')  rows = rows.filter(r => r.sales_cents === 0 && r.spend_cents > 1000)
 
@@ -121,9 +127,12 @@ export default async function KeywordsPage({
   const buildUrl = (params: Record<string, string | undefined>) => {
     const base: Record<string, string | undefined> = {
       profile_id: String(activeProfileId),
-      days:       String(days),
+      days:       isAllTime ? 'all' : String(days),
       filter,
       adType,
+      state:      kwState !== 'all' ? kwState : undefined,
+      start:      searchParams.start,
+      end:        searchParams.end,
       ...params,
     }
     const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('&')
@@ -140,38 +149,49 @@ export default async function KeywordsPage({
         <div>
           <h1 className="text-xl font-bold text-gray-900">Keywords</h1>
           <p className="text-sm text-gray-400 mt-0.5">
-            {rows.length} keywords · {sortedGroups.length} campaign{sortedGroups.length !== 1 ? 's' : ''} · {adType === 'sb' ? 'Sponsored Brands' : 'Sponsored Products'} · Last {days} days
+            {rows.length} keywords · {sortedGroups.length} campaign{sortedGroups.length !== 1 ? 's' : ''} · {adType === 'sb' ? 'Sponsored Brands' : 'Sponsored Products'} · {isAllTime ? 'All time' : isCustom ? `${startStr} – ${endStr}` : `Last ${days} days`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* SP / SB toggle */}
           <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
             {(['sp', 'sb'] as const).map(t => (
-              <Link
-                key={t}
-                href={buildUrl({ adType: t })}
+              <Link key={t} href={buildUrl({ adType: t })}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  adType === t
-                    ? t === 'sp' ? 'bg-blue-500 text-white' : 'bg-purple-500 text-white'
-                    : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+                  adType === t ? t === 'sp' ? 'bg-blue-500 text-white' : 'bg-purple-500 text-white' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
                 }`}
-              >
-                {t.toUpperCase()}
-              </Link>
+              >{t.toUpperCase()}</Link>
+            ))}
+          </div>
+          {/* State filter */}
+          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
+            {([['all', 'All'], ['enabled', 'Enabled'], ['paused', 'Paused'], ['archived', 'Archived']] as const).map(([s, label]) => (
+              <Link key={s} href={buildUrl({ state: s === 'all' ? undefined : s })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  kwState === s ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >{label}</Link>
             ))}
           </div>
           {/* Day range */}
-          {[7, 14, 30, 90].map(d => (
-            <Link
-              key={d}
-              href={buildUrl({ days: String(d) })}
+          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
+            {[7, 14, 30, 90].map(d => (
+              <Link key={d} href={buildUrl({ days: String(d), start: undefined, end: undefined })}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  !isCustom && !isAllTime && days === d ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >{d}d</Link>
+            ))}
+            <Link href={buildUrl({ days: 'all', start: undefined, end: undefined })}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                days === d ? 'bg-orange-500 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-orange-300'
+                isAllTime ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'
               }`}
-            >
-              {d}d
-            </Link>
-          ))}
+            >All</Link>
+          </div>
+          {/* Custom date range */}
+          <Suspense fallback={null}>
+            <DateRangePicker start={startStr} end={endStr} basePath="/dashboard/keywords" />
+          </Suspense>
         </div>
       </div>
 

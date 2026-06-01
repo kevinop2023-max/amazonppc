@@ -138,7 +138,8 @@ async function recordBidHistory(db: any, pid: number, rows: any[], adType: 'sp' 
 }
 
 async function upsertSpKeywords(db: any, pid: number, rows: any[]) {
-  const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), ad_group_id: n(r.adGroupId), campaign_id: n(r.campaignId), date: r.date, keyword_text: r.keyword ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
+  // keyword_text: use r.keyword for manual keywords; fall back to r.targetingText for auto/product-target rows
+  const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), ad_group_id: n(r.adGroupId), campaign_id: n(r.campaignId), date: r.date, keyword_text: r.keyword ?? r.targetingText ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
   if (!r.length) return 0
   const { error } = await db.from('sp_keywords').upsert(r, { onConflict: 'profile_id,keyword_id,date' })
   if (error) throw new Error(`sp_keywords: ${error.message}`)
@@ -149,16 +150,19 @@ async function upsertSpKeywords(db: any, pid: number, rows: any[]) {
 async function upsertSpSearchTerms(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
   // Deduplicate: same search term can appear multiple times (multiple keywords match it)
+  // searchTerm = actual customer query (confirmed correct field from Amazon v3 API docs)
+  // targeting = keyword/ASIN expression that matched — NOT the customer query
   const map = new Map<string, any>()
   for (const r of rows) {
-    const key = `${n(r.campaignId)}|${n(r.adGroupId)}|${r.date}|${r.targeting ?? ''}`
+    const term = r.searchTerm ?? r.targeting ?? ''
+    const key = `${n(r.campaignId)}|${n(r.adGroupId)}|${r.date}|${term}`
     const ex = map.get(key)
     if (ex) {
       ex.impressions += n(r.impressions); ex.clicks += n(r.clicks)
       ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales14d)
       ex.orders += n(r.purchases14d); ex.units += n(r.unitsSoldClicks14d)
     } else {
-      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: n(r.adGroupId), date: r.date, customer_search_term: r.targeting ?? '', keyword_id: r.keywordId ? n(r.keywordId) : null, match_type: r.matchType?.toLowerCase() ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
+      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: n(r.adGroupId), date: r.date, customer_search_term: term, keyword_id: r.keywordId ? n(r.keywordId) : null, match_type: r.matchType?.toLowerCase() ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
     }
   }
   const deduped = [...map.values()]
@@ -178,8 +182,8 @@ async function upsertSbCampaigns(db: any, pid: number, rows: any[]) {
 }
 
 async function upsertSbKeywords(db: any, pid: number, rows: any[]) {
-  // SB keyword text is 'keywordText' in v3 (not 'keyword' which is SP-specific)
-  const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, keyword_text: r.keywordText ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
+  // keywordText: correct for SB (not 'keyword' which is SP-specific). targetingText fallback for ASIN/product target rows.
+  const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, keyword_text: r.keywordText ?? r.targetingText ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
   if (!r.length) return 0
   const { error } = await db.from('sb_keywords').upsert(r, { onConflict: 'profile_id,keyword_id,date' })
   if (error) throw new Error(`sb_keywords: ${error.message}`)

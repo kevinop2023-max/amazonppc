@@ -251,13 +251,30 @@ export default async function KeywordsPage({
                       return (
                         <tr key={kw.keyword_id} className="border-b border-gray-50 last:border-0 hover:bg-orange-50/30 transition-colors">
                           <td className="py-3 font-medium text-gray-900 max-w-[260px]">
-                            <span className="block truncate pl-8 pr-4">{kw.keyword_text}</span>
+                            {kw.keyword_text
+                              ? <span className="block truncate pl-8 pr-4">{kw.keyword_text}</span>
+                              : <span className="block truncate pl-8 pr-4 text-gray-400 italic text-xs">
+                                  {kw.match_type === 'close-match'   ? 'Close Match (auto)'   :
+                                   kw.match_type === 'loose-match'   ? 'Loose Match (auto)'   :
+                                   kw.match_type === 'substitutes'   ? 'Substitutes (auto)'   :
+                                   kw.match_type === 'complements'   ? 'Complements (auto)'   :
+                                   kw.match_type?.startsWith('targeting') ? 'Product/ASIN target' :
+                                   '—'}
+                                </span>
+                            }
                           </td>
                           <td className="px-4 py-3">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                              kw.match_type === 'exact'  ? 'bg-blue-50 text-blue-700' :
-                              kw.match_type === 'phrase' ? 'bg-purple-50 text-purple-700' :
-                                                           'bg-gray-100 text-gray-600'
+                              kw.match_type === 'exact'    ? 'bg-blue-50 text-blue-700'     :
+                              kw.match_type === 'phrase'   ? 'bg-purple-50 text-purple-700' :
+                              kw.match_type === 'broad'    ? 'bg-gray-100 text-gray-600'    :
+                              kw.match_type === 'theme'    ? 'bg-violet-50 text-violet-700' :
+                              kw.match_type === 'close-match' || kw.match_type === 'loose-match' ||
+                              kw.match_type === 'substitutes' || kw.match_type === 'complements'
+                                                           ? 'bg-amber-50 text-amber-700'   :
+                              kw.match_type?.startsWith('targeting')
+                                                           ? 'bg-teal-50 text-teal-700'     :
+                                                             'bg-gray-100 text-gray-600'
                             }`}>
                               {kw.match_type}
                             </span>

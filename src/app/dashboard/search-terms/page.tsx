@@ -100,8 +100,18 @@ export default async function SearchTermsPage({
     b[1].reduce((s, t) => s + t.spend, 0) - a[1].reduce((s, t) => s + t.spend, 0)
   )
 
-  const totalWaste = mode === 'wasted' ? terms.reduce((s, t) => s + t.spend, 0) : null
-  const colCount   = mode === 'wasted' ? 9 : 8
+  // ASIN/product-target match types need a Negative PRODUCT TARGET, not a negative keyword
+  function isAsinType(mt: string | null) {
+    if (!mt) return false
+    const m = mt.toLowerCase()
+    return m === 'targeting_expression' || m === 'targeting_expression_predefined' ||
+           m === 'substitutes' || m === 'complements'
+  }
+
+  const totalWaste      = mode === 'wasted' ? terms.reduce((s, t) => s + t.spend, 0) : null
+  const wastedKwCount   = mode === 'wasted' ? terms.filter(t => !isAsinType(t.matchType)).length : 0
+  const wastedAsinCount = mode === 'wasted' ? terms.filter(t => isAsinType(t.matchType)).length : 0
+  const colCount        = mode === 'wasted' ? 9 : 8
 
   // Match type badge — distinguishes customer queries from ASIN matches and auto-targeting
   function termTypeBadge(matchType: string | null) {
@@ -207,7 +217,9 @@ export default async function SearchTermsPage({
           <div>
             <p className="font-bold text-red-800 text-sm">${totalWaste.toFixed(2)} wasted {isAllTime ? 'all time' : isCustom ? `${startStr} – ${endStr}` : `over ${days} days`}</p>
             <p className="text-xs text-red-600 mt-0.5">
-              {terms.length} search term{terms.length !== 1 ? 's' : ''} with over ${minSpend} spend and zero sales. Add these as negative keywords.
+              {terms.length} term{terms.length !== 1 ? 's' : ''} with &gt;${minSpend} spend and zero sales.
+              {wastedKwCount > 0 && <> <span className="font-semibold">{wastedKwCount} KW</span> → add as negative keywords.</>}
+              {wastedAsinCount > 0 && <> <span className="font-semibold">{wastedAsinCount} ASIN/Auto</span> → add as negative product targets.</>}
             </p>
           </div>
         </div>
@@ -299,9 +311,15 @@ export default async function SearchTermsPage({
                       </td>
                       {mode === 'wasted' && (
                         <td className="px-5 py-3 text-right">
-                          <span className="text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-red-100 transition-colors">
-                            + Negative
-                          </span>
+                          {isAsinType(t.matchType) ? (
+                            <span title="Add as Negative Product Target (ASIN/category, not a keyword)" className="text-[11px] font-semibold bg-teal-50 text-teal-700 border border-teal-200 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-teal-100 transition-colors">
+                              + Neg Target
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-semibold bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-red-100 transition-colors">
+                              + Negative
+                            </span>
+                          )}
                         </td>
                       )}
                     </tr>

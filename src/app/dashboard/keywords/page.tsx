@@ -9,6 +9,15 @@ function fmt$(cents: number) {
   return '$' + (cents / 100).toFixed(2)
 }
 
+// Format targeting expressions for display: asin="B07XXXX" → "B07XXXX", category=123 → "Category 123"
+function formatTargetText(text: string): string {
+  const asinMatch = text.match(/asin="?([A-Z0-9]{10})"?/i)
+  if (asinMatch) return asinMatch[1]
+  const catMatch = text.match(/category=(\d+)/)
+  if (catMatch) return `Category ${catMatch[1]}`
+  return text
+}
+
 function acosColor(acos: number | null) {
   if (acos === null) return 'text-gray-400'
   if (acos > 50) return 'text-red-600 font-semibold'
@@ -252,7 +261,9 @@ export default async function KeywordsPage({
                         <tr key={kw.keyword_id} className="border-b border-gray-50 last:border-0 hover:bg-orange-50/30 transition-colors">
                           <td className="py-3 font-medium text-gray-900 max-w-[260px]">
                             {kw.keyword_text
-                              ? <span className="block truncate pl-8 pr-4">{kw.keyword_text}</span>
+                              ? <span className="block truncate pl-8 pr-4" title={kw.keyword_text}>
+                                  {formatTargetText(kw.keyword_text)}
+                                </span>
                               : <span className="block truncate pl-8 pr-4 text-gray-400 italic text-xs">
                                   {kw.match_type === 'close-match'   ? 'Close Match (auto)'   :
                                    kw.match_type === 'loose-match'   ? 'Loose Match (auto)'   :

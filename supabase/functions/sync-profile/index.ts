@@ -230,7 +230,8 @@ Deno.serve(async (req) => {
 
     // Column definitions
     const SP_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
-    const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','targetingText','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+    // SP v3: targeting expression text field is 'targeting' (not 'targetingText' which is the SB/v2 name)
+    const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SP_ST: include both 'searchTerm' (customer query) and 'targeting' (keyword/ASIN expression that matched)
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','searchTerm','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SB spend/clicks report — sales columns not supported at campaign level

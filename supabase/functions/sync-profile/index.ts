@@ -180,10 +180,12 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
     const all: any[] = []
     let start = 0
     for (let page = 0; page < 50; page++) {
-      const res = await fetch(`${AMAZON_ADS_BASE}${path}?stateFilter=enabled&count=100&${paramName}=${start}`, { headers: h })
-      if (!res.ok) { console.log(`[sync] negatives ${path}: HTTP ${res.status}`); break }
+      // No stateFilter — fetch all states (enabled + deleted); filter client-side if needed
+      const res = await fetch(`${AMAZON_ADS_BASE}${path}?count=100&${paramName}=${start}`, { headers: h })
+      if (!res.ok) { console.log(`[sync] negatives ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }
       const data = await res.json()
-      const rows = Array.isArray(data) ? data : (data.negativeKeywords ?? data.negativeTargets ?? [])
+      // Amazon returns either a plain array OR { negativeKeywords: [...] } / { negativeTargets: [...] }
+      const rows = Array.isArray(data) ? data : (data.negativeKeywords ?? data.negativeTargets ?? data.keywords ?? data.targets ?? [])
       if (!rows.length) break
       all.push(...rows)
       if (rows.length < 100) break

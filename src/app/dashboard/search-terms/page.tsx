@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import DateRangePicker from '@/components/DateRangePicker'
+import SearchTermsTable from '@/components/SearchTermsTable'
 
 export const revalidate = 0
 
@@ -100,6 +101,7 @@ export default async function SearchTermsPage({
   const sortedGroups = [...grouped.entries()].sort((a, b) =>
     b[1].reduce((s, t) => s + t.spend, 0) - a[1].reduce((s, t) => s + t.spend, 0)
   )
+  const allCampaigns = sortedGroups.map(([name]) => name)
 
   // ASIN/product-target match types need a Negative PRODUCT TARGET, not a negative keyword
   function isAsinType(mt: string | null) {
@@ -239,8 +241,17 @@ export default async function SearchTermsPage({
         </div>
       )}
 
-      {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      {/* Table with campaign filter */}
+      <SearchTermsTable
+        sortedGroups={sortedGroups as any}
+        campaigns={allCampaigns}
+        mode={mode}
+        colCount={colCount}
+        minSpend={minSpend}
+      />
+
+      {/* OLD TABLE REMOVED — now in SearchTermsTable client component */}
+      {false && <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto scrollbar-thin">
           <table className="w-full text-sm">
             <thead>
@@ -339,7 +350,7 @@ export default async function SearchTermsPage({
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
 
     </div>
   )

@@ -238,26 +238,13 @@ export default async function TargetingPage({
         </div>
       </div>
 
-      {/* Tab count summary */}
-      <div className="flex gap-3 flex-wrap text-xs text-gray-500">
-        {[
-          ['keywords', 'Keywords'],
-          ['products', 'Product Targets'],
-          ...(adType !== 'sb' ? [['auto', 'Auto Targets'] as const] : []),
-          ['negatives', `Negatives`],
-        ].map(([k, label]) => (
-          <span key={k} className="bg-white border border-gray-200 rounded-full px-3 py-1">
-            {label} <span className="font-semibold text-gray-700">{k === 'negatives' ? negRows.length : (tabCounts as any)[k] ?? 0}</span>
-          </span>
-        ))}
-      </div>
-
       <TargetingTable
         adType={adType}
         activeTab={activeTab}
         sortedGroups={sortedGroups as any}
         negGroups={negSortedGroups as any}
         campaigns={allCampaigns}
+        tabCounts={{ ...tabCounts, negatives: negRows.length }}
         baseParams={{
           profileId: String(activeProfileId ?? ''),
           days: isAllTime ? 'all' : String(days),

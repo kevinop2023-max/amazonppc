@@ -62,10 +62,11 @@ interface Props {
   sortedGroups: [string, KwRow[]][]
   negGroups: [string, NegRow[]][]
   campaigns: string[]
+  tabCounts: Record<string, number>
   baseParams: BaseParams
 }
 
-export default function TargetingTable({ adType, activeTab, sortedGroups, negGroups, campaigns, baseParams }: Props) {
+export default function TargetingTable({ adType, activeTab, sortedGroups, negGroups, campaigns, tabCounts, baseParams }: Props) {
   function buildUrl(params: Record<string, string | undefined>) {
     const base: Record<string, string> = {
       profile_id: baseParams.profileId,
@@ -108,11 +109,11 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
   }, [sortedGroups, negGroups, campaignSearch, campaignFilter, activeTab])
 
   const tabs = [
-    { key: 'all', label: 'All' },
-    { key: 'keywords', label: 'Keywords' },
-    { key: 'products', label: 'Product Targets' },
-    ...(adType !== 'sb' ? [{ key: 'auto', label: 'Auto Targets' }] : []),
-    { key: 'negatives', label: 'Negatives' },
+    { key: 'all',       label: `All (${(tabCounts.all ?? 0)})` },
+    { key: 'keywords',  label: `Keywords (${tabCounts.keywords ?? 0})` },
+    { key: 'products',  label: `Product Targets (${tabCounts.products ?? 0})` },
+    ...(adType !== 'sb' ? [{ key: 'auto', label: `Auto Targets (${tabCounts.auto ?? 0})` }] : []),
+    { key: 'negatives', label: `Negatives (${tabCounts.negatives ?? 0})` },
   ]
 
   const isNeg = activeTab === 'negatives'
@@ -167,7 +168,7 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
                   </>
                 ) : (
                   <>
-                    {['Keyword / Target','Match','State','Bid','Impr.','Clicks','Spend','Sales','Orders','ACOS'].map(h => (
+                    {['Keyword / Target','Match','State','Bid','Impr.','Clicks','Spend','Sales','Orders','ACOS','CPC'].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </>
@@ -176,12 +177,12 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
             </thead>
             <tbody>
               {filteredGroups.length === 0 ? (
-                <tr><td colSpan={isNeg ? 4 : 10} className="px-4 py-16 text-center text-sm text-gray-400">No data for this filter.</td></tr>
+                <tr><td colSpan={isNeg ? 4 : 11} className="px-4 py-16 text-center text-sm text-gray-400">No data for this filter.</td></tr>
               ) : filteredGroups.map(([campaignName, rows]) => (
                 <>
                   {/* Campaign header */}
                   <tr key={`h-${campaignName}`} className="bg-gray-50 border-y border-gray-100">
-                    <td colSpan={isNeg ? 4 : 10} className="px-4 py-2">
+                    <td colSpan={isNeg ? 4 : 11} className="px-4 py-2">
                       <div className="flex items-center gap-2">
                         <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide truncate">{campaignName}</span>
                         <span className="text-[10px] text-gray-400 bg-gray-200 rounded px-1.5 py-0.5">{rows.length}</span>
@@ -238,10 +239,13 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
                               <td className={`px-4 py-3 tabular-nums ${acosColor(acos)}`}>
                                 {acos !== null ? acos.toFixed(1) + '%' : '—'}
                               </td>
+                              <td className="px-4 py-3 text-gray-500 tabular-nums">
+                                {kw.clicks > 0 ? '$' + (kw.spend_cents / kw.clicks / 100).toFixed(2) : '—'}
+                              </td>
                             </tr>
                             {isExpanded && (
                               <tr key={`${kw.keyword_id}-hist`} className="bg-orange-50/20 border-b border-orange-100">
-                                <td colSpan={10} className="px-8 py-4">
+                                <td colSpan={11} className="px-8 py-4">
                                   {loadingBid ? (
                                     <p className="text-xs text-gray-400">Loading bid history…</p>
                                   ) : bidHistory.length === 0 ? (

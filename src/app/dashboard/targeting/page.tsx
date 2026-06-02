@@ -10,11 +10,16 @@ function dateStr(daysAgo: number) {
   const d = new Date(); d.setDate(d.getDate() - daysAgo); return d.toISOString().split('T')[0]
 }
 
-// Which match types belong to each tab
-const TAB_TYPES: Record<string, string[]> = {
-  keywords: ['exact','phrase','broad','theme'],
-  products: ['targeting_expression','targeting_expression_predefined'],
-  auto:     ['close-match','loose-match','substitutes','complements'],
+// Derive targeting type from row data.
+// Amazon spTargeting report stores auto rows with match_type='targeting_expression_predefined'
+// but the keyword_text (from r.targeting) contains the group name: close-match/loose-match/etc.
+// Product/ASIN rows have keyword_text like asin="B07..." or a category expression.
+function getTargetType(row: { match_type?: string | null; keyword_text?: string | null }): 'keywords' | 'products' | 'auto' {
+  const mt = (row.match_type ?? '').toLowerCase()
+  const kw = (row.keyword_text ?? '').toLowerCase()
+  if (['exact', 'phrase', 'broad', 'theme'].includes(mt)) return 'keywords'
+  if (['close-match', 'loose-match', 'substitutes', 'complements'].includes(kw)) return 'auto'
+  return 'products'
 }
 
 export default async function TargetingPage({
@@ -22,7 +27,7 @@ export default async function TargetingPage({
 }: {
   searchParams: {
     profile_id?: string; days?: string; adType?: string; state?: string
-    start?: string; end?: string; tab?: string; campaign?: string
+    start?: string; end?: string; tab?: string
   }
 }) {
   const supabase = await createClient()
@@ -33,78 +38,85 @@ export default async function TargetingPage({
 
   const isAllTime = searchParams.days === 'all'
   const days      = isAllTime ? 0 : Number(searchParams.days ?? 30)
-  const adType    = (searchParams.adType ?? 'sp') as 'sp' | 'sb'
+  const adType    = (searchParams.adType ?? 'sp') as 'sp' | 'sb' | 'all'
   const kwState   = searchParams.state ?? 'all'
   const activeTab = searchParams.tab ?? 'all'
   const isCustom  = !!(searchParams.start && searchParams.end)
   const startStr  = searchParams.start ?? (isAllTime ? '2020-01-01' : dateStr(days))
   const endStr    = searchParams.end ?? dateStr(1)
 
-  const kwTable   = adType === 'sb' ? 'sb_keywords'  : 'sp_keywords'
-  const campTable = adType === 'sb' ? 'sb_campaigns' : 'sp_campaigns'
-
   const activeProfileId = profileId
 
-  // ── Fetch targeting rows (all-time meta + date-range perf) ──────────────────
-  const [{ data: kwRows }, { data: kwPerfRows }] = activeProfileId ? await Promise.all([
-    supabase.from(kwTable)
-      .select('keyword_id, campaign_id, keyword_text, match_type, state, bid_cents')
-      .eq('profile_id', activeProfileId)
-      .order('date', { ascending: false })
-      .range(0, 49999),
-    supabase.from(kwTable)
-      .select('keyword_id, impressions, clicks, spend_cents, sales_cents, orders')
-      .eq('profile_id', activeProfileId)
-      .gte('date', startStr).lte('date', endStr)
-      .range(0, 49999),
-  ]) : [{ data: [] }, { data: [] }]
-
-  // Aggregate perf per keyword_id
-  const perfMap = new Map<number, { impressions: number; clicks: number; spend_cents: number; sales_cents: number; orders: number }>()
-  for (const r of kwPerfRows ?? []) {
-    const p = perfMap.get(r.keyword_id) ?? { impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0 }
-    p.impressions += r.impressions; p.clicks += r.clicks
-    p.spend_cents += r.spend_cents; p.sales_cents += r.sales_cents; p.orders += r.orders
-    perfMap.set(r.keyword_id, p)
+  // ── Fetch targeting rows from SP and/or SB ──────────────────────────────────
+  async function fetchKw(table: 'sp_keywords' | 'sb_keywords', adTypeMark: string) {
+    if (!activeProfileId) return { meta: [], perf: [], adTypeMark }
+    const [{ data: meta }, { data: perf }] = await Promise.all([
+      supabase.from(table).select('keyword_id, campaign_id, keyword_text, match_type, state, bid_cents')
+        .eq('profile_id', activeProfileId).order('date', { ascending: false }).range(0, 49999),
+      supabase.from(table).select('keyword_id, impressions, clicks, spend_cents, sales_cents, orders')
+        .eq('profile_id', activeProfileId).gte('date', startStr).lte('date', endStr).range(0, 49999),
+    ])
+    return { meta: meta ?? [], perf: perf ?? [], adTypeMark }
   }
 
-  // Dedupe meta (most-recent row per keyword_id)
-  const metaMap = new Map<number, any>()
-  for (const r of kwRows ?? []) {
-    if (!metaMap.has(r.keyword_id)) metaMap.set(r.keyword_id, r)
+  const sources = adType === 'all'
+    ? await Promise.all([fetchKw('sp_keywords', 'SP'), fetchKw('sb_keywords', 'SB')])
+    : [await fetchKw(adType === 'sb' ? 'sb_keywords' : 'sp_keywords', adType.toUpperCase())]
+
+  // Aggregate perf and meta per source
+  type KwRow = { keyword_id: number; campaign_id: number; keyword_text: string; match_type: string; state: string; bid_cents: number; impressions: number; clicks: number; spend_cents: number; sales_cents: number; orders: number; adTypeMark: string }
+  const allRows: KwRow[] = []
+
+  for (const { meta, perf, adTypeMark } of sources) {
+    const perfMap = new Map<number, { impressions: number; clicks: number; spend_cents: number; sales_cents: number; orders: number }>()
+    for (const r of perf) {
+      const p = perfMap.get(r.keyword_id) ?? { impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0 }
+      p.impressions += r.impressions; p.clicks += r.clicks
+      p.spend_cents += r.spend_cents; p.sales_cents += r.sales_cents; p.orders += r.orders
+      perfMap.set(r.keyword_id, p)
+    }
+    const metaMap = new Map<number, any>()
+    for (const r of meta) { if (!metaMap.has(r.keyword_id)) metaMap.set(r.keyword_id, r) }
+    for (const [, r] of metaMap) {
+      allRows.push({ ...r, ...(perfMap.get(r.keyword_id) ?? { impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0 }), adTypeMark })
+    }
   }
 
-  let rows = Array.from(metaMap.values()).map(r => ({
-    ...r,
-    ...(perfMap.get(r.keyword_id) ?? { impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0 }),
-  }))
-
-  // Apply state filter
+  let rows = allRows
   if (kwState !== 'all') rows = rows.filter(r => r.state === kwState)
 
+  // Tab counts (from all rows before tab filter)
+  const tabCounts = {
+    all:      rows.length,
+    keywords: rows.filter(r => getTargetType(r) === 'keywords').length,
+    products: rows.filter(r => getTargetType(r) === 'products').length,
+    auto:     rows.filter(r => getTargetType(r) === 'auto').length,
+  }
+
   // Apply tab filter
-  if (activeTab !== 'all' && activeTab !== 'negatives' && TAB_TYPES[activeTab]) {
-    rows = rows.filter(r => TAB_TYPES[activeTab].includes((r.match_type ?? '').toLowerCase()))
+  if (activeTab !== 'all' && activeTab !== 'negatives') {
+    rows = rows.filter(r => getTargetType(r) === activeTab)
   }
 
-  // ── Fetch campaign names ────────────────────────────────────────────────────
+  // ── Campaign names ──────────────────────────────────────────────────────────
   const campIds = [...new Set(rows.map(r => r.campaign_id).filter(Boolean))]
-  const { data: campRows } = campIds.length > 0
-    ? await supabase.from(campTable).select('campaign_id, campaign_name')
-        .eq('profile_id', activeProfileId!).in('campaign_id', campIds)
-        .order('date', { ascending: false }).range(0, 4999)
-    : { data: [] as any[] }
-
+  const campTables = adType === 'all' ? ['sp_campaigns', 'sb_campaigns'] : [adType === 'sb' ? 'sb_campaigns' : 'sp_campaigns']
   const campaignNames = new Map<number, string>()
-  for (const c of campRows ?? []) {
-    if (!campaignNames.has(c.campaign_id)) campaignNames.set(c.campaign_id, c.campaign_name)
+
+  if (campIds.length > 0 && activeProfileId) {
+    const campResults = await Promise.all(
+      campTables.map(t => supabase.from(t).select('campaign_id, campaign_name')
+        .eq('profile_id', activeProfileId).in('campaign_id', campIds)
+        .order('date', { ascending: false }).range(0, 4999))
+    )
+    for (const { data } of campResults) {
+      for (const c of data ?? []) {
+        if (!campaignNames.has(c.campaign_id)) campaignNames.set(c.campaign_id, c.campaign_name)
+      }
+    }
   }
 
-  // Apply campaign filter (URL param)
-  const campaignParam = searchParams.campaign
   const rowsWithCamp = rows.map(r => ({ ...r, campaignName: campaignNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}` }))
-
-  // Group by campaign, sort by total spend desc
   const grouped = new Map<string, typeof rowsWithCamp>()
   for (const kw of rowsWithCamp) {
     if (!grouped.has(kw.campaignName)) grouped.set(kw.campaignName, [])
@@ -115,69 +127,83 @@ export default async function TargetingPage({
   )
   const allCampaigns = sortedGroups.map(([name]) => name)
 
-  // ── Fetch negatives ─────────────────────────────────────────────────────────
-  const negKwTable  = adType === 'sb' ? 'sb_negative_keywords' : 'sp_negative_keywords'
-  const [{ data: negKwRows }, { data: negTgtRows }] = activeProfileId ? await Promise.all([
-    supabase.from(negKwTable).select('keyword_id, campaign_id, ad_group_id, keyword_text, match_type, state')
-      .eq('profile_id', activeProfileId).range(0, 9999),
-    adType === 'sp'
-      ? supabase.from('sp_negative_targets').select('target_id, campaign_id, ad_group_id, expression, state')
-          .eq('profile_id', activeProfileId).range(0, 9999)
-      : Promise.resolve({ data: [] as any[] }),
-  ]) : [{ data: [] }, { data: [] }]
+  // ── Negatives ───────────────────────────────────────────────────────────────
+  type NegRow = { keyword_id?: number; target_id?: number; keyword_text?: string; expression?: string; match_type: string; state: string; campaign_id: number; ad_group_id?: number; campaignName: string; level: string; type: 'keyword' | 'target'; adTypeMark: string }
 
-  // Get campaign names for negatives
-  const negCampIds = [...new Set([
-    ...(negKwRows ?? []).map((r: any) => r.campaign_id),
-    ...(negTgtRows ?? []).map((r: any) => r.campaign_id),
-  ].filter(Boolean))]
-  const { data: negCampRows } = negCampIds.length > 0
-    ? await supabase.from(campTable).select('campaign_id, campaign_name')
-        .eq('profile_id', activeProfileId!).in('campaign_id', negCampIds)
-        .order('date', { ascending: false }).range(0, 4999)
-    : { data: [] as any[] }
-  const negCampNames = new Map<number, string>()
-  for (const c of negCampRows ?? []) {
-    if (!negCampNames.has(c.campaign_id)) negCampNames.set(c.campaign_id, c.campaign_name)
+  let negRows: NegRow[] = []
+  if (activeProfileId) {
+    const fetchNeg = async () => {
+      const tasks: Promise<any>[] = []
+      if (adType !== 'sb') {
+        tasks.push(
+          supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999),
+          supabase.from('sp_negative_targets').select('target_id, campaign_id, ad_group_id, expression, state').eq('profile_id', activeProfileId).range(0, 9999)
+        )
+      }
+      if (adType !== 'sp') {
+        // sb_negative_keywords has no ad_group_id column
+        tasks.push(supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999))
+      }
+      return Promise.all(tasks)
+    }
+    const negResults = await fetchNeg()
+    const negCampIds = new Set<number>()
+
+    for (const { data } of negResults) {
+      for (const r of data ?? []) negCampIds.add(r.campaign_id)
+    }
+
+    const negCampNames = new Map<number, string>()
+    if (negCampIds.size > 0) {
+      const negCampResults = await Promise.all(
+        campTables.map(t => supabase.from(t).select('campaign_id, campaign_name')
+          .eq('profile_id', activeProfileId).in('campaign_id', [...negCampIds])
+          .order('date', { ascending: false }).range(0, 4999))
+      )
+      for (const { data } of negCampResults) {
+        for (const c of data ?? []) { if (!negCampNames.has(c.campaign_id)) negCampNames.set(c.campaign_id, c.campaign_name) }
+      }
+    }
+
+    // Flatten results into negRows
+    let idx = 0
+    if (adType !== 'sb') {
+      for (const r of negResults[idx]?.data ?? []) {
+        negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword', adTypeMark: 'SP' })
+      }
+      idx++
+      for (const r of negResults[idx]?.data ?? []) {
+        negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target', adTypeMark: 'SP' })
+      }
+      idx++
+    }
+    if (adType !== 'sp') {
+      for (const r of negResults[idx]?.data ?? []) {
+        negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: 'Campaign', type: 'keyword', adTypeMark: 'SB' })
+      }
+    }
   }
 
-  const negRows = [
-    ...(negKwRows ?? []).map((r: any) => ({
-      ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`,
-      level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword' as const,
-    })),
-    ...(negTgtRows ?? []).map((r: any) => ({
-      ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`,
-      level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target' as const,
-    })),
-  ]
-  const negGrouped = new Map<string, typeof negRows>()
+  const negGrouped = new Map<string, NegRow[]>()
   for (const n of negRows) {
     if (!negGrouped.has(n.campaignName)) negGrouped.set(n.campaignName, [])
     negGrouped.get(n.campaignName)!.push(n)
   }
   const negSortedGroups = [...negGrouped.entries()]
 
-  // ── URL builder ─────────────────────────────────────────────────────────────
+  // ── URL builder (server-rendered links only) ─────────────────────────────────
   const buildUrl = (params: Record<string, string | undefined>) => {
     const base: Record<string, string | undefined> = {
       profile_id: String(activeProfileId),
       days: isAllTime ? 'all' : String(days),
-      adType, state: kwState !== 'all' ? kwState : undefined,
+      adType: adType !== 'sp' ? adType : undefined,
+      state: kwState !== 'all' ? kwState : undefined,
       start: searchParams.start, end: searchParams.end,
-      tab: activeTab,
+      tab: activeTab !== 'all' ? activeTab : undefined,
       ...params,
     }
-    const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v!)}`) .join('&')
+    const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v!)}`).join('&')
     return `/dashboard/targeting?${qs}`
-  }
-
-  const tabCounts: Record<string, number> = {
-    all: rows.length,
-    keywords: rows.filter(r => TAB_TYPES.keywords.includes((r.match_type ?? '').toLowerCase())).length,
-    products: rows.filter(r => TAB_TYPES.products.includes((r.match_type ?? '').toLowerCase())).length,
-    auto: rows.filter(r => TAB_TYPES.auto.includes((r.match_type ?? '').toLowerCase())).length,
-    negatives: negRows.length,
   }
 
   return (
@@ -191,14 +217,15 @@ export default async function TargetingPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {/* SP / SB */}
+          {/* All / SP / SB */}
           <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
-            {(['sp','sb'] as const).map(t => (
-              <Link key={t} href={buildUrl({ adType: t, tab: 'all' })}
+            {([['all','All'],['sp','SP'],['sb','SB']] as const).map(([t, label]) => (
+              <Link key={t} href={buildUrl({ adType: t === 'sp' ? undefined : t, tab: undefined })}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  adType === t ? t === 'sp' ? 'bg-blue-500 text-white' : 'bg-purple-500 text-white'
-                  : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}>
-                {t.toUpperCase()}
+                  adType === t
+                    ? t === 'sp' ? 'bg-blue-500 text-white' : t === 'sb' ? 'bg-purple-500 text-white' : 'bg-gray-900 text-white'
+                    : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}>
+                {label}
               </Link>
             ))}
           </div>
@@ -230,17 +257,20 @@ export default async function TargetingPage({
         </div>
       </div>
 
-      {/* Tab count pills (read-only summary) */}
-      <div className="flex gap-3 text-xs text-gray-500">
-        {Object.entries(tabCounts).filter(([k]) => k !== 'all' && (k !== 'auto' || adType === 'sp')).map(([k, n]) => (
+      {/* Tab count summary */}
+      <div className="flex gap-3 flex-wrap text-xs text-gray-500">
+        {[
+          ['keywords', 'Keywords'],
+          ['products', 'Product Targets'],
+          ...(adType !== 'sb' ? [['auto', 'Auto Targets'] as const] : []),
+          ['negatives', `Negatives`],
+        ].map(([k, label]) => (
           <span key={k} className="bg-white border border-gray-200 rounded-full px-3 py-1">
-            <span className="capitalize">{k === 'products' ? 'Product Targets' : k === 'negatives' ? 'Negatives' : k === 'auto' ? 'Auto Targets' : k}</span>
-            <span className="ml-1 font-semibold text-gray-700">{n}</span>
+            {label} <span className="font-semibold text-gray-700">{k === 'negatives' ? negRows.length : (tabCounts as any)[k] ?? 0}</span>
           </span>
         ))}
       </div>
 
-      {/* Interactive table (Client Component) */}
       <TargetingTable
         adType={adType}
         activeTab={activeTab}

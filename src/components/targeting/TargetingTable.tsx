@@ -57,7 +57,7 @@ interface BaseParams {
 }
 
 interface Props {
-  adType: 'sp' | 'sb'
+  adType: 'sp' | 'sb' | 'all'
   activeTab: string
   sortedGroups: [string, KwRow[]][]
   negGroups: [string, NegRow[]][]
@@ -91,7 +91,8 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
     setExpanded(kwId)
     setLoadingBid(true)
     startTransition(async () => {
-      const hist = await getBidHistory(kwId, adType)
+      // For 'all' adType, try sp first (most common); the keyword row itself has adTypeMark
+      const hist = await getBidHistory(kwId, adType === 'all' ? 'sp' : adType)
       setBidHistory(hist)
       setLoadingBid(false)
     })
@@ -110,7 +111,7 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
     { key: 'all', label: 'All' },
     { key: 'keywords', label: 'Keywords' },
     { key: 'products', label: 'Product Targets' },
-    ...(adType === 'sp' ? [{ key: 'auto', label: 'Auto Targets' }] : []),
+    ...(adType !== 'sb' ? [{ key: 'auto', label: 'Auto Targets' }] : []),
     { key: 'negatives', label: 'Negatives' },
   ]
 

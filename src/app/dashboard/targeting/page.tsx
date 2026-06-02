@@ -129,7 +129,7 @@ export default async function TargetingPage({
   // Get campaign names for negatives
   const negCampIds = [...new Set([
     ...(negKwRows ?? []).map((r: any) => r.campaign_id),
-    ...(negTgtRows?.data ?? negTgtRows ?? []).map((r: any) => r.campaign_id),
+    ...(negTgtRows ?? []).map((r: any) => r.campaign_id),
   ].filter(Boolean))]
   const { data: negCampRows } = negCampIds.length > 0
     ? await supabase.from(campTable).select('campaign_id, campaign_name')
@@ -146,7 +146,7 @@ export default async function TargetingPage({
       ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`,
       level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword' as const,
     })),
-    ...((negTgtRows as any)?.data ?? negTgtRows ?? []).map((r: any) => ({
+    ...(negTgtRows ?? []).map((r: any) => ({
       ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`,
       level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target' as const,
     })),

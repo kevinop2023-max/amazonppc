@@ -32,7 +32,7 @@ export default function DashboardNav({ user, profiles, isAdmin = false }: { user
     { href: `/dashboard/campaigns${p}`,    label: 'Campaigns',    icon: '◈' },
     { href: `/dashboard/search-terms${p}`,  label: 'Search Terms', icon: '⌕' },
     { href: `/dashboard/comparison${p}`,   label: 'Comparison',   icon: '⇄' },
-    { href: `/dashboard/keywords${p}`,     label: 'Keywords',     icon: '◇' },
+    { href: `/dashboard/targeting${p}`,    label: 'Targeting',    icon: '◇' },
     { href: `/dashboard/alerts${p}`,       label: 'Alerts',       icon: '◉' },
     { href: `/dashboard/data-sync${p}`,    label: 'Data Sync',    icon: '↺' },
     ...(isAdmin ? [{ href: '/dashboard/admin/users', label: 'Users', icon: '◎' }] : []),

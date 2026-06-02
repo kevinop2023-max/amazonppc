@@ -28,21 +28,21 @@ export default async function SearchTermsPage({
   // Round 1: search term rows (include campaign_id for grouping)
   const [spRes, sbRes] = await Promise.all([
     adType !== 'SB'
-      ? supabase.from('sp_search_terms').select('campaign_id, customer_search_term, match_type, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
+      ? supabase.from('sp_search_terms').select('campaign_id, customer_search_term, match_type, targeting_keyword, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
       : Promise.resolve({ data: [] as any[] }),
     adType !== 'SP'
-      ? supabase.from('sb_search_terms').select('campaign_id, customer_search_term, match_type, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
+      ? supabase.from('sb_search_terms').select('campaign_id, customer_search_term, match_type, targeting_keyword, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
       : Promise.resolve({ data: [] as any[] }),
   ])
 
   // Aggregate by (adType, campaignId, term) — same term in different campaigns = separate rows
-  type TermAgg = { adType: string; campaignId: number; term: string; matchType: string | null; spend: number; sales: number; orders: number; clicks: number; impressions: number }
+  type TermAgg = { adType: string; campaignId: number; term: string; matchType: string | null; targetingKeyword: string | null; spend: number; sales: number; orders: number; clicks: number; impressions: number }
   const map = new Map<string, TermAgg>()
 
   function addRows(rows: any[] | null, adType: string) {
     for (const r of rows ?? []) {
       const key = `${adType}|${r.campaign_id}|${r.customer_search_term}`
-      if (!map.has(key)) map.set(key, { adType, campaignId: Number(r.campaign_id), term: r.customer_search_term ?? '', matchType: r.match_type ?? null, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 })
+      if (!map.has(key)) map.set(key, { adType, campaignId: Number(r.campaign_id), term: r.customer_search_term ?? '', matchType: r.match_type ?? null, targetingKeyword: r.targeting_keyword ?? null, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 })
       const a = map.get(key)!
       a.spend       += r.spend_cents
       a.sales       += r.sales_cents
@@ -72,10 +72,11 @@ export default async function SearchTermsPage({
   for (const c of sbCampRes.data ?? []) { const k = `SB|${c.campaign_id}`; if (!campaignNames.has(k)) campaignNames.set(k, c.campaign_name) }
 
   let terms = Array.from(map.values()).map(t => ({
-    term:         t.term,
-    adType:       t.adType,
-    matchType:    t.matchType,
-    campaignId:   t.campaignId,
+    term:             t.term,
+    adType:           t.adType,
+    matchType:        t.matchType,
+    targetingKeyword: t.targetingKeyword,
+    campaignId:       t.campaignId,
     campaignName: campaignNames.get(`${t.adType}|${t.campaignId}`) ?? `Campaign ${t.campaignId}`,
     spend:  t.spend / 100,
     sales:  t.sales / 100,
@@ -111,7 +112,7 @@ export default async function SearchTermsPage({
   const totalWaste      = mode === 'wasted' ? terms.reduce((s, t) => s + t.spend, 0) : null
   const wastedKwCount   = mode === 'wasted' ? terms.filter(t => !isAsinType(t.matchType)).length : 0
   const wastedAsinCount = mode === 'wasted' ? terms.filter(t => isAsinType(t.matchType)).length : 0
-  const colCount        = mode === 'wasted' ? 9 : 8
+  const colCount        = mode === 'wasted' ? 10 : 9
 
   // Match type badge — distinguishes customer queries from ASIN matches and auto-targeting
   function termTypeBadge(matchType: string | null) {
@@ -245,6 +246,7 @@ export default async function SearchTermsPage({
             <thead>
               <tr className="border-b border-gray-100">
                 <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Search Term</th>
+                <th className="text-left px-3 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Triggered By</th>
                 <th className="text-center px-3 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Type</th>
                 <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Spend</th>
                 <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sales</th>
@@ -284,6 +286,14 @@ export default async function SearchTermsPage({
                     <tr key={`${t.campaignId}-${i}`} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
                       <td className="py-3 font-medium text-gray-900 max-w-xs">
                         <span className="block truncate pl-8 pr-4" title={t.term}>{t.term}</span>
+                      </td>
+                      <td className="px-3 py-3 max-w-[180px]">
+                        {t.targetingKeyword
+                          ? <span className="block truncate text-xs text-gray-500" title={t.targetingKeyword}>{t.targetingKeyword}</span>
+                          : t.matchType?.includes('match') || t.matchType?.includes('substitutes') || t.matchType?.includes('complements')
+                            ? <span className="text-xs text-gray-400 italic">{t.matchType}</span>
+                            : <span className="text-gray-300 text-xs">—</span>
+                        }
                       </td>
                       <td className="px-3 py-3 text-center">
                         <div className="flex items-center justify-center gap-1">

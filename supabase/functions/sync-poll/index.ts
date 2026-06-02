@@ -162,7 +162,7 @@ async function upsertSpSearchTerms(db: any, pid: number, rows: any[]) {
       ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales14d)
       ex.orders += n(r.purchases14d); ex.units += n(r.unitsSoldClicks14d)
     } else {
-      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: n(r.adGroupId), date: r.date, customer_search_term: term, keyword_id: r.keywordId ? n(r.keywordId) : null, match_type: r.matchType?.toLowerCase() ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
+      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: n(r.adGroupId), date: r.date, customer_search_term: term, keyword_id: r.keywordId ? n(r.keywordId) : null, match_type: r.matchType?.toLowerCase() ?? null, targeting_keyword: r.targeting ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) })
     }
   }
   const deduped = [...map.values()]
@@ -206,7 +206,7 @@ async function upsertSbSearchTerms(db: any, pid: number, rows: any[]) {
       ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales)
       ex.orders += n(r.purchases); ex.units += n(r.unitsSold)
     } else {
-      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: term, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales), orders: n(r.purchases), units: n(r.unitsSold) })
+      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: term, targeting_keyword: r.keywordText ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales), orders: n(r.purchases), units: n(r.unitsSold) })
     }
   }
   const deduped = [...map.values()]

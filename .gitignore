@@ -17,3 +17,10 @@ node_modules/
 npm-debug.log*
 
 .vercel
+
+# Supabase CLI binaries (large, not needed in repo)
+supabase.exe
+supabase-go.exe
+supabase_cli.tar.gz
+supabase/.temp/
+supabase/ensure_users_rows.sql

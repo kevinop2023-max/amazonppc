@@ -167,6 +167,69 @@ async function syncCampaignStates(token: string, pid: string, db: any, numericPi
   ])
 }
 
+// ── Negative keyword + target snapshot ───────────────────────────────────────
+// Runs on every sync (manual + scheduler). REST calls — no async report needed.
+async function syncNegativeKeywords(token: string, pid: string, db: any, numericPid: number) {
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
+    'Amazon-Advertising-API-Scope': pid,
+  }
+
+  async function listAllPaged(path: string, paramName = 'startIndex'): Promise<any[]> {
+    const all: any[] = []
+    let start = 0
+    for (let page = 0; page < 50; page++) {
+      const res = await fetch(`${AMAZON_ADS_BASE}${path}?stateFilter=enabled&count=100&${paramName}=${start}`, { headers: h })
+      if (!res.ok) { console.log(`[sync] negatives ${path}: HTTP ${res.status}`); break }
+      const data = await res.json()
+      const rows = Array.isArray(data) ? data : (data.negativeKeywords ?? data.negativeTargets ?? [])
+      if (!rows.length) break
+      all.push(...rows)
+      if (rows.length < 100) break
+      start += 100
+    }
+    return all
+  }
+
+  const [spNegKw, sbNegKw, spNegTgt] = await Promise.all([
+    listAllPaged('/v2/sp/negativeKeywords').catch(e => { console.log(`[sync] sp-neg-kw: ${e}`); return [] }),
+    listAllPaged('/sb/negativeKeywords').catch(e    => { console.log(`[sync] sb-neg-kw: ${e}`); return [] }),
+    listAllPaged('/v2/sp/negativeTargets').catch(e  => { console.log(`[sync] sp-neg-tgt: ${e}`); return [] }),
+  ])
+
+  const upsertNeg = async (table: string, rows: object[]) => {
+    if (!rows.length) return
+    const { error } = await (db as any).from(table).upsert(rows, { onConflict: 'profile_id,keyword_id', ignoreDuplicates: false })
+    if (error) console.log(`[sync] ${table} neg-upsert: ${error.message}`)
+    else console.log(`[sync] ${table}: ${rows.length} negative rows`)
+  }
+  const upsertNegTgt = async (table: string, rows: object[]) => {
+    if (!rows.length) return
+    const { error } = await (db as any).from(table).upsert(rows, { onConflict: 'profile_id,target_id', ignoreDuplicates: false })
+    if (error) console.log(`[sync] ${table} neg-tgt-upsert: ${error.message}`)
+    else console.log(`[sync] ${table}: ${rows.length} negative target rows`)
+  }
+
+  await Promise.all([
+    upsertNeg('sp_negative_keywords', spNegKw.map(k => ({
+      profile_id: numericPid, campaign_id: Number(k.campaignId), ad_group_id: k.adGroupId ? Number(k.adGroupId) : null,
+      keyword_id: Number(k.keywordId), keyword_text: k.keywordText ?? '', match_type: (k.matchType ?? 'negativeExact').toLowerCase(),
+      state: (k.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
+    }))),
+    upsertNeg('sb_negative_keywords', sbNegKw.map(k => ({
+      profile_id: numericPid, campaign_id: Number(k.campaignId),
+      keyword_id: Number(k.keywordId), keyword_text: k.keywordText ?? '', match_type: (k.matchType ?? 'negativeExact').toLowerCase(),
+      state: (k.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
+    }))),
+    upsertNegTgt('sp_negative_targets', spNegTgt.map(t => ({
+      profile_id: numericPid, campaign_id: Number(t.campaignId), ad_group_id: t.adGroupId ? Number(t.adGroupId) : null,
+      target_id: Number(t.targetId), expression: t.targetingExpression ? JSON.stringify(t.targetingExpression) : null,
+      state: (t.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
+    }))),
+  ])
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -220,13 +283,11 @@ Deno.serve(async (req) => {
 
     const pid = String(profile.profile_id)
 
-    // Snapshot current campaign states (enabled/paused/archived) from the campaign
-    // list API. Non-fatal — if it fails, the rest of the sync continues normally.
-    try {
-      await syncCampaignStates(token, pid, db, profile.profile_id)
-    } catch (e) {
-      console.log(`[sync] campaign-states skipped: ${e}`)
-    }
+    // Snapshot current campaign states + negative keywords — non-fatal if either fails.
+    await Promise.allSettled([
+      syncCampaignStates(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] campaign-states skipped: ${e}`)),
+      syncNegativeKeywords(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] negative-keywords skipped: ${e}`)),
+    ])
 
     // Column definitions
     const SP_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']

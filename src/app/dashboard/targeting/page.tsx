@@ -243,12 +243,18 @@ export default async function TargetingPage({
       {/* Interactive table (Client Component) */}
       <TargetingTable
         adType={adType}
-        tab={activeTab}
         activeTab={activeTab}
         sortedGroups={sortedGroups as any}
         negGroups={negSortedGroups as any}
         campaigns={allCampaigns}
-        buildUrl={buildUrl}
+        baseParams={{
+          profileId: String(activeProfileId ?? ''),
+          days: isAllTime ? 'all' : String(days),
+          adType,
+          state: kwState !== 'all' ? kwState : '',
+          start: searchParams.start ?? '',
+          end: searchParams.end ?? '',
+        }}
       />
     </div>
   )

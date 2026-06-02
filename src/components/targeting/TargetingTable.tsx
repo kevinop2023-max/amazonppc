@@ -51,17 +51,34 @@ type NegRow = {
   campaignName: string; level: string; type: 'keyword' | 'target'
 }
 
+interface BaseParams {
+  profileId: string; days: string; adType: string
+  state: string; start: string; end: string
+}
+
 interface Props {
   adType: 'sp' | 'sb'
-  tab: string
   activeTab: string
   sortedGroups: [string, KwRow[]][]
   negGroups: [string, NegRow[]][]
   campaigns: string[]
-  buildUrl: (p: Record<string, string | undefined>) => string
+  baseParams: BaseParams
 }
 
-export default function TargetingTable({ adType, tab, activeTab, sortedGroups, negGroups, campaigns, buildUrl }: Props) {
+export default function TargetingTable({ adType, activeTab, sortedGroups, negGroups, campaigns, baseParams }: Props) {
+  function buildUrl(params: Record<string, string | undefined>) {
+    const base: Record<string, string> = {
+      profile_id: baseParams.profileId,
+      days: baseParams.days,
+      adType: baseParams.adType,
+      ...(baseParams.state ? { state: baseParams.state } : {}),
+      ...(baseParams.start ? { start: baseParams.start } : {}),
+      ...(baseParams.end   ? { end:   baseParams.end   } : {}),
+    }
+    const merged = { ...base, ...params }
+    const qs = Object.entries(merged).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v!)}`).join('&')
+    return `/dashboard/targeting?${qs}`
+  }
   const [expanded, setExpanded] = useState<number | null>(null)
   const [bidHistory, setBidHistory] = useState<{ date: string; bid: number }[]>([])
   const [loadingBid, setLoadingBid] = useState(false)

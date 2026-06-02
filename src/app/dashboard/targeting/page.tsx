@@ -132,31 +132,26 @@ export default async function TargetingPage({
 
   let negRows: NegRow[] = []
   if (activeProfileId) {
-    const fetchNeg = async () => {
-      const tasks: Promise<any>[] = []
-      if (adType !== 'sb') {
-        tasks.push(
-          supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999),
-          supabase.from('sp_negative_targets').select('target_id, campaign_id, ad_group_id, expression, state').eq('profile_id', activeProfileId).range(0, 9999)
-        )
-      }
-      if (adType !== 'sp') {
-        // sb_negative_keywords has no ad_group_id column
-        tasks.push(supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999))
-      }
-      return Promise.all(tasks)
-    }
-    const negResults = await fetchNeg()
-    const negCampIds = new Set<number>()
+    const empty = { data: [] as any[] }
+    const [spNegKw, spNegTgt, sbNegKw] = await Promise.all([
+      adType !== 'sb'
+        ? supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
+        : Promise.resolve(empty),
+      adType !== 'sb'
+        ? supabase.from('sp_negative_targets').select('target_id, campaign_id, ad_group_id, expression, state').eq('profile_id', activeProfileId).range(0, 9999)
+        : Promise.resolve(empty),
+      adType !== 'sp'
+        ? supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
+        : Promise.resolve(empty),
+    ])
 
-    for (const { data } of negResults) {
-      for (const r of data ?? []) negCampIds.add(r.campaign_id)
-    }
+    const negCampIds = new Set<number>()
+    for (const r of [...(spNegKw.data ?? []), ...(spNegTgt.data ?? []), ...(sbNegKw.data ?? [])]) negCampIds.add(r.campaign_id)
 
     const negCampNames = new Map<number, string>()
     if (negCampIds.size > 0) {
       const negCampResults = await Promise.all(
-        campTables.map(t => supabase.from(t).select('campaign_id, campaign_name')
+        campTables.map(t => supabase.from(t as any).select('campaign_id, campaign_name')
           .eq('profile_id', activeProfileId).in('campaign_id', [...negCampIds])
           .order('date', { ascending: false }).range(0, 4999))
       )
@@ -165,23 +160,9 @@ export default async function TargetingPage({
       }
     }
 
-    // Flatten results into negRows
-    let idx = 0
-    if (adType !== 'sb') {
-      for (const r of negResults[idx]?.data ?? []) {
-        negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword', adTypeMark: 'SP' })
-      }
-      idx++
-      for (const r of negResults[idx]?.data ?? []) {
-        negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target', adTypeMark: 'SP' })
-      }
-      idx++
-    }
-    if (adType !== 'sp') {
-      for (const r of negResults[idx]?.data ?? []) {
-        negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: 'Campaign', type: 'keyword', adTypeMark: 'SB' })
-      }
-    }
+    for (const r of spNegKw.data ?? [])  negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword', adTypeMark: 'SP' })
+    for (const r of spNegTgt.data ?? []) negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target',  adTypeMark: 'SP' })
+    for (const r of sbNegKw.data ?? [])  negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: 'Campaign',                                      type: 'keyword', adTypeMark: 'SB' })
   }
 
   const negGrouped = new Map<string, NegRow[]>()

@@ -168,24 +168,47 @@ async function syncCampaignStates(token: string, pid: string, db: any, numericPi
 }
 
 // ── Negative keyword + target snapshot ───────────────────────────────────────
-// Runs on every sync (manual + scheduler). REST calls — no async report needed.
+// Uses v3 SP management API (POST /list) + v2 SB GET endpoint.
+// SP has BOTH campaign-level and ad-group-level negative keywords — both are fetched.
 async function syncNegativeKeywords(token: string, pid: string, db: any, numericPid: number) {
-  const h: Record<string, string> = {
+  const baseH: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
     'Amazon-Advertising-API-Scope': pid,
   }
 
-  async function listAllPaged(path: string, paramName = 'startIndex'): Promise<any[]> {
+  // v3 SP management API uses POST /list with nextToken pagination
+  async function listV3Post(path: string, mediaType: string, dataKey: string): Promise<any[]> {
+    const all: any[] = []
+    let nextToken: string | null = null
+    for (let page = 0; page < 50; page++) {
+      const body: any = { maxResults: 100 }
+      if (nextToken) body.nextToken = nextToken
+      const res = await fetch(`${AMAZON_ADS_BASE}${path}`, {
+        method: 'POST',
+        headers: { ...baseH, 'Content-Type': `application/vnd.${mediaType}+json`, 'Accept': `application/vnd.${mediaType}+json` },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) { console.log(`[sync] neg ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }
+      const data = await res.json()
+      const rows: any[] = data[dataKey] ?? []
+      console.log(`[sync] neg ${path} page ${page}: ${rows.length} rows`)
+      all.push(...rows)
+      nextToken = data.nextToken ?? null
+      if (!nextToken || rows.length < 100) break
+    }
+    return all
+  }
+
+  // v2 GET endpoint for SB negative keywords (SB management API still uses GET)
+  async function listV2Get(path: string): Promise<any[]> {
     const all: any[] = []
     let start = 0
     for (let page = 0; page < 50; page++) {
-      // No stateFilter — fetch all states (enabled + deleted); filter client-side if needed
-      const res = await fetch(`${AMAZON_ADS_BASE}${path}?count=100&${paramName}=${start}`, { headers: h })
-      if (!res.ok) { console.log(`[sync] negatives ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }
+      const res = await fetch(`${AMAZON_ADS_BASE}${path}?count=100&startIndex=${start}`, { headers: baseH })
+      if (!res.ok) { console.log(`[sync] neg ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }
       const data = await res.json()
-      // Amazon returns either a plain array OR { negativeKeywords: [...] } / { negativeTargets: [...] }
-      const rows = Array.isArray(data) ? data : (data.negativeKeywords ?? data.negativeTargets ?? data.keywords ?? data.targets ?? [])
+      const rows = Array.isArray(data) ? data : (data.negativeKeywords ?? [])
       if (!rows.length) break
       all.push(...rows)
       if (rows.length < 100) break
@@ -194,39 +217,50 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
     return all
   }
 
-  const [spNegKw, sbNegKw, spNegTgt] = await Promise.all([
-    listAllPaged('/v2/sp/negativeKeywords').catch(e => { console.log(`[sync] sp-neg-kw: ${e}`); return [] }),
-    listAllPaged('/sb/negativeKeywords').catch(e    => { console.log(`[sync] sb-neg-kw: ${e}`); return [] }),
-    listAllPaged('/v2/sp/negativeTargets').catch(e  => { console.log(`[sync] sp-neg-tgt: ${e}`); return [] }),
+  // Fetch SP campaign-level negatives, SP ad-group-level negatives, SP negative targets, SB negatives
+  const [spCampNegKw, spAdGrpNegKw, spNegTgt, sbNegKw] = await Promise.all([
+    listV3Post('/sp/campaignNegativeKeywords/list', 'spCampaignNegativeKeyword.v3', 'campaignNegativeKeywords')
+      .catch(e => { console.log(`[sync] sp-camp-neg-kw: ${e}`); return [] }),
+    listV3Post('/sp/adGroupNegativeKeywords/list', 'spAdGroupNegativeKeyword.v3', 'adGroupNegativeKeywords')
+      .catch(e => { console.log(`[sync] sp-adgrp-neg-kw: ${e}`); return [] }),
+    listV3Post('/sp/negativeTargets/list', 'spNegativeTarget.v3', 'negativeTargets')
+      .catch(e => { console.log(`[sync] sp-neg-tgt: ${e}`); return [] }),
+    listV2Get('/sb/negativeKeywords')
+      .catch(e => { console.log(`[sync] sb-neg-kw: ${e}`); return [] }),
   ])
 
-  const upsertNeg = async (table: string, rows: object[]) => {
+  const upsertNeg = async (table: string, conflictCol: string, rows: object[]) => {
     if (!rows.length) return
-    const { error } = await (db as any).from(table).upsert(rows, { onConflict: 'profile_id,keyword_id', ignoreDuplicates: false })
+    const { error } = await (db as any).from(table).upsert(rows, { onConflict: `profile_id,${conflictCol}`, ignoreDuplicates: false })
     if (error) console.log(`[sync] ${table} neg-upsert: ${error.message}`)
-    else console.log(`[sync] ${table}: ${rows.length} negative rows`)
-  }
-  const upsertNegTgt = async (table: string, rows: object[]) => {
-    if (!rows.length) return
-    const { error } = await (db as any).from(table).upsert(rows, { onConflict: 'profile_id,target_id', ignoreDuplicates: false })
-    if (error) console.log(`[sync] ${table} neg-tgt-upsert: ${error.message}`)
-    else console.log(`[sync] ${table}: ${rows.length} negative target rows`)
+    else console.log(`[sync] ${table}: ${rows.length} rows`)
   }
 
-  await Promise.all([
-    upsertNeg('sp_negative_keywords', spNegKw.map(k => ({
+  // Merge campaign-level + ad-group-level SP negatives into sp_negative_keywords (ad_group_id nullable)
+  const allSpNegKw = [
+    ...spCampNegKw.map((k: any) => ({
+      profile_id: numericPid, campaign_id: Number(k.campaignId), ad_group_id: null,
+      keyword_id: Number(k.keywordId), keyword_text: k.keywordText ?? '', match_type: (k.matchType ?? 'negativeExact').toLowerCase(),
+      state: (k.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
+    })),
+    ...spAdGrpNegKw.map((k: any) => ({
       profile_id: numericPid, campaign_id: Number(k.campaignId), ad_group_id: k.adGroupId ? Number(k.adGroupId) : null,
       keyword_id: Number(k.keywordId), keyword_text: k.keywordText ?? '', match_type: (k.matchType ?? 'negativeExact').toLowerCase(),
       state: (k.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
-    }))),
-    upsertNeg('sb_negative_keywords', sbNegKw.map(k => ({
+    })),
+  ]
+
+  await Promise.all([
+    upsertNeg('sp_negative_keywords', 'keyword_id', allSpNegKw),
+    upsertNeg('sb_negative_keywords', 'keyword_id', sbNegKw.map((k: any) => ({
       profile_id: numericPid, campaign_id: Number(k.campaignId),
       keyword_id: Number(k.keywordId), keyword_text: k.keywordText ?? '', match_type: (k.matchType ?? 'negativeExact').toLowerCase(),
       state: (k.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
     }))),
-    upsertNegTgt('sp_negative_targets', spNegTgt.map(t => ({
+    upsertNeg('sp_negative_targets', 'target_id', spNegTgt.map((t: any) => ({
       profile_id: numericPid, campaign_id: Number(t.campaignId), ad_group_id: t.adGroupId ? Number(t.adGroupId) : null,
-      target_id: Number(t.targetId), expression: t.targetingExpression ? JSON.stringify(t.targetingExpression) : null,
+      target_id: Number(t.targetId),
+      expression: t.expression ? JSON.stringify(t.expression) : (t.targetingExpression ? JSON.stringify(t.targetingExpression) : null),
       state: (t.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
     }))),
   ])
@@ -294,14 +328,14 @@ Deno.serve(async (req) => {
     // Column definitions
     const SP_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SP v3: targeting expression text field is 'targeting' (not 'targetingText' which is the SB/v2 name)
-    const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','targeting','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+    const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','targeting','topOfSearchImpressionShare','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SP_ST: include both 'searchTerm' (customer query) and 'targeting' (keyword/ASIN expression that matched)
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','searchTerm','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SB spend/clicks report — sales columns not supported at campaign level
     const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
     // SB_KW: sales columns not supported by sbTargeting in v3 — media metrics only.
     // SB keyword text: 'keywordText' (not 'keyword' which is SP-specific). 'targetingText' for ASIN/product target rows.
-    const SB_KW   = ['date','campaignId','adGroupId','keywordId','keywordText','matchType','adKeywordStatus','keywordBid','targetingText','impressions','clicks','cost']
+    const SB_KW   = ['date','campaignId','adGroupId','keywordId','keywordText','matchType','adKeywordStatus','keywordBid','targetingText','topOfSearchImpressionShare','impressions','clicks','cost']
     const SB_ST   = ['date','campaignId','adGroupId','searchTerm','matchType','keywordId','impressions','clicks','cost','purchases','sales','unitsSold']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
     const SB_ATTR = ['date','campaignId','sales14d','orders14d']

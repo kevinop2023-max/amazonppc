@@ -192,7 +192,6 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
       if (!res.ok) { console.log(`[sync] neg ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }
       const data = await res.json()
       const rows: any[] = data[dataKey] ?? []
-      console.log(`[sync] neg ${path} page ${page}: ${rows.length} rows`)
       all.push(...rows)
       nextToken = data.nextToken ?? null
       if (!nextToken || rows.length < 100) break
@@ -218,12 +217,15 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
   }
 
   // Fetch SP campaign-level negatives, SP ad-group-level negatives, SP negative targets, SB negatives
+  // Media types + response keys confirmed via live API error messages (2026-06-04):
+  // - ad-group neg keywords: endpoint is /sp/negativeKeywords/list (NOT adGroupNegativeKeywords)
+  // - neg targets media type: spnegativeTargetingClause.v3 (lowercase 'n'), key: negativeTargetingClauses
   const [spCampNegKw, spAdGrpNegKw, spNegTgt, sbNegKw] = await Promise.all([
     listV3Post('/sp/campaignNegativeKeywords/list', 'spCampaignNegativeKeyword.v3', 'campaignNegativeKeywords')
       .catch(e => { console.log(`[sync] sp-camp-neg-kw: ${e}`); return [] }),
-    listV3Post('/sp/adGroupNegativeKeywords/list', 'spAdGroupNegativeKeyword.v3', 'adGroupNegativeKeywords')
+    listV3Post('/sp/negativeKeywords/list', 'spNegativeKeyword.v3', 'negativeKeywords')
       .catch(e => { console.log(`[sync] sp-adgrp-neg-kw: ${e}`); return [] }),
-    listV3Post('/sp/negativeTargets/list', 'spNegativeTarget.v3', 'negativeTargets')
+    listV3Post('/sp/negativeTargets/list', 'spnegativeTargetingClause.v3', 'negativeTargetingClauses')
       .catch(e => { console.log(`[sync] sp-neg-tgt: ${e}`); return [] }),
     listV2Get('/sb/negativeKeywords')
       .catch(e => { console.log(`[sync] sb-neg-kw: ${e}`); return [] }),
@@ -259,11 +261,13 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
     }))),
     upsertNeg('sp_negative_targets', 'target_id', spNegTgt.map((t: any) => ({
       profile_id: numericPid, campaign_id: Number(t.campaignId), ad_group_id: t.adGroupId ? Number(t.adGroupId) : null,
-      target_id: Number(t.targetId),
+      target_id: Number(t.negativeTargetId ?? t.targetId),
       expression: t.expression ? JSON.stringify(t.expression) : (t.targetingExpression ? JSON.stringify(t.targetingExpression) : null),
       state: (t.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
     }))),
   ])
+
+  console.log(`[sync] negatives — spCampKw:${spCampNegKw.length} spAdGrpKw:${spAdGrpNegKw.length} spTgt:${spNegTgt.length} sbKw:${sbNegKw.length}`)
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────

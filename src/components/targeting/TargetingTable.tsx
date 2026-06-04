@@ -11,7 +11,8 @@ function acosColor(acos: number | null) {
   return 'text-amber-600 font-semibold'
 }
 
-function matchBadge(mt: string) {
+function matchBadge(mt: string | null | undefined) {
+  if (!mt) return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-teal-50 text-teal-700">ASIN target</span>
   const m = mt.toLowerCase()
   const cls =
     m === 'exact'   ? 'bg-blue-50 text-blue-700' :

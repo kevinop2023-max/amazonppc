@@ -135,34 +135,20 @@ export default async function TargetingPage({
     const empty = { data: [] as any[] }
     const [spNegKw, spNegTgt, sbNegKw] = await Promise.all([
       adType !== 'sb'
-        ? supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
+        ? supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, campaign_name, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
         : Promise.resolve(empty),
       adType !== 'sb'
-        ? supabase.from('sp_negative_targets').select('target_id, campaign_id, ad_group_id, expression, state').eq('profile_id', activeProfileId).range(0, 9999)
+        ? supabase.from('sp_negative_targets').select('target_id, campaign_id, campaign_name, ad_group_id, expression, state').eq('profile_id', activeProfileId).range(0, 9999)
         : Promise.resolve(empty),
       adType !== 'sp'
-        ? supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
+        ? supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, campaign_name, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
         : Promise.resolve(empty),
     ])
 
-    const negCampIds = new Set<number>()
-    for (const r of [...(spNegKw.data ?? []), ...(spNegTgt.data ?? []), ...(sbNegKw.data ?? [])]) negCampIds.add(r.campaign_id)
-
-    const negCampNames = new Map<number, string>()
-    if (negCampIds.size > 0) {
-      const negCampResults = await Promise.all(
-        campTables.map(t => supabase.from(t as any).select('campaign_id, campaign_name')
-          .eq('profile_id', activeProfileId).in('campaign_id', [...negCampIds])
-          .order('date', { ascending: false }).range(0, 4999))
-      )
-      for (const { data } of negCampResults) {
-        for (const c of data ?? []) { if (!negCampNames.has(c.campaign_id)) negCampNames.set(c.campaign_id, c.campaign_name) }
-      }
-    }
-
-    for (const r of spNegKw.data ?? [])  negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword', adTypeMark: 'SP' })
-    for (const r of spNegTgt.data ?? []) negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target',  adTypeMark: 'SP' })
-    for (const r of sbNegKw.data ?? [])  negRows.push({ ...r, campaignName: negCampNames.get(r.campaign_id) ?? `Campaign ${r.campaign_id}`, level: 'Campaign',                                      type: 'keyword', adTypeMark: 'SB' })
+    const nm = (r: any) => r.campaign_name || `Campaign ${r.campaign_id}`
+    for (const r of spNegKw.data ?? [])  negRows.push({ ...r, campaignName: nm(r), level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword', adTypeMark: 'SP' })
+    for (const r of spNegTgt.data ?? []) negRows.push({ ...r, campaignName: nm(r), level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target',  adTypeMark: 'SP' })
+    for (const r of sbNegKw.data ?? [])  negRows.push({ ...r, campaignName: nm(r), level: 'Campaign',                                      type: 'keyword', adTypeMark: 'SB' })
   }
 
   const negGrouped = new Map<string, NegRow[]>()
@@ -171,6 +157,7 @@ export default async function TargetingPage({
     negGrouped.get(n.campaignName)!.push(n)
   }
   const negSortedGroups = [...negGrouped.entries()]
+  const negCampaigns = negSortedGroups.map(([name]) => name).sort()
 
   // ── URL builder (server-rendered links only) ─────────────────────────────────
   const buildUrl = (params: Record<string, string | undefined>) => {
@@ -244,6 +231,7 @@ export default async function TargetingPage({
         sortedGroups={sortedGroups as any}
         negGroups={negSortedGroups as any}
         campaigns={allCampaigns}
+        negCampaigns={negCampaigns}
         tabCounts={{ ...tabCounts, negatives: negRows.length }}
         baseParams={{
           profileId: String(activeProfileId ?? ''),

@@ -63,11 +63,12 @@ interface Props {
   sortedGroups: [string, KwRow[]][]
   negGroups: [string, NegRow[]][]
   campaigns: string[]
+  negCampaigns: string[]
   tabCounts: Record<string, number>
   baseParams: BaseParams
 }
 
-export default function TargetingTable({ adType, activeTab, sortedGroups, negGroups, campaigns, tabCounts, baseParams }: Props) {
+export default function TargetingTable({ adType, activeTab, sortedGroups, negGroups, campaigns, negCampaigns, tabCounts, baseParams }: Props) {
   function buildUrl(params: Record<string, string | undefined>) {
     const base: Record<string, string> = {
       profile_id: baseParams.profileId,
@@ -144,10 +145,10 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
         <select
           value={campaignFilter}
           onChange={e => setCampaignFilter(e.target.value)}
-          className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-orange-300 bg-white"
+          className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:border-orange-300 bg-white max-w-xs"
         >
           <option value="all">All campaigns</option>
-          {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
+          {(activeTab === 'negatives' ? negCampaigns : campaigns).map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         {(campaignSearch || campaignFilter !== 'all') && (
           <button onClick={() => { setCampaignSearch(''); setCampaignFilter('all') }}

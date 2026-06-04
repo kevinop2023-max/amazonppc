@@ -231,6 +231,42 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
       .catch(e => { console.log(`[sync] sb-neg-kw: ${e}`); return [] }),
   ])
 
+  // Fetch campaign id→name for ALL campaigns (incl. archived) so negatives on old campaigns get real names.
+  // sp_campaigns only has campaigns with recent perf data; many negatives belong to archived campaigns.
+  const campNames = new Map<number, string>()
+  // SP campaigns via v3 list (all states)
+  try {
+    let nextToken: string | null = null
+    for (let page = 0; page < 50; page++) {
+      const body: any = { maxResults: 500, stateFilter: { include: ['ENABLED', 'PAUSED', 'ARCHIVED'] } }
+      if (nextToken) body.nextToken = nextToken
+      const res = await fetch(`${AMAZON_ADS_BASE}/sp/campaigns/list`, {
+        method: 'POST',
+        headers: { ...baseH, 'Content-Type': 'application/vnd.spCampaign.v3+json', 'Accept': 'application/vnd.spCampaign.v3+json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) { console.log(`[sync] sp campaign-names: HTTP ${res.status}`); break }
+      const data = await res.json()
+      for (const c of data.campaigns ?? []) campNames.set(Number(c.campaignId), c.name ?? '')
+      nextToken = data.nextToken ?? null
+      if (!nextToken) break
+    }
+  } catch (e) { console.log(`[sync] sp campaign-names: ${e}`) }
+  // SB campaigns via v2 GET
+  try {
+    let start = 0
+    for (let page = 0; page < 30; page++) {
+      const res = await fetch(`${AMAZON_ADS_BASE}/sb/campaigns?stateFilter=enabled,paused,archived&count=100&startIndex=${start}`, { headers: baseH })
+      if (!res.ok) break
+      const arr = await res.json()
+      if (!Array.isArray(arr) || !arr.length) break
+      for (const c of arr) campNames.set(Number(c.campaignId), c.name ?? '')
+      if (arr.length < 100) break
+      start += 100
+    }
+  } catch (e) { console.log(`[sync] sb campaign-names: ${e}`) }
+  const cname = (id: number) => campNames.get(id) ?? null
+
   const upsertNeg = async (table: string, conflictCol: string, rows: object[]) => {
     if (!rows.length) return
     const { error } = await (db as any).from(table).upsert(rows, { onConflict: `profile_id,${conflictCol}`, ignoreDuplicates: false })
@@ -242,11 +278,13 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
   const allSpNegKw = [
     ...spCampNegKw.map((k: any) => ({
       profile_id: numericPid, campaign_id: Number(k.campaignId), ad_group_id: null,
+      campaign_name: cname(Number(k.campaignId)),
       keyword_id: Number(k.keywordId), keyword_text: k.keywordText ?? '', match_type: (k.matchType ?? 'negativeExact').toLowerCase(),
       state: (k.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
     })),
     ...spAdGrpNegKw.map((k: any) => ({
       profile_id: numericPid, campaign_id: Number(k.campaignId), ad_group_id: k.adGroupId ? Number(k.adGroupId) : null,
+      campaign_name: cname(Number(k.campaignId)),
       keyword_id: Number(k.keywordId), keyword_text: k.keywordText ?? '', match_type: (k.matchType ?? 'negativeExact').toLowerCase(),
       state: (k.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
     })),
@@ -255,12 +293,13 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
   await Promise.all([
     upsertNeg('sp_negative_keywords', 'keyword_id', allSpNegKw),
     upsertNeg('sb_negative_keywords', 'keyword_id', sbNegKw.map((k: any) => ({
-      profile_id: numericPid, campaign_id: Number(k.campaignId),
+      profile_id: numericPid, campaign_id: Number(k.campaignId), campaign_name: cname(Number(k.campaignId)),
       keyword_id: Number(k.keywordId), keyword_text: k.keywordText ?? '', match_type: (k.matchType ?? 'negativeExact').toLowerCase(),
       state: (k.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),
     }))),
     upsertNeg('sp_negative_targets', 'target_id', spNegTgt.map((t: any) => ({
       profile_id: numericPid, campaign_id: Number(t.campaignId), ad_group_id: t.adGroupId ? Number(t.adGroupId) : null,
+      campaign_name: cname(Number(t.campaignId)),
       target_id: Number(t.negativeTargetId ?? t.targetId),
       expression: t.expression ? JSON.stringify(t.expression) : (t.targetingExpression ? JSON.stringify(t.targetingExpression) : null),
       state: (t.state ?? 'enabled').toLowerCase(), synced_at: new Date().toISOString(),

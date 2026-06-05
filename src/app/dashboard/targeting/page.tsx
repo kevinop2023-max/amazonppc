@@ -39,7 +39,6 @@ export default async function TargetingPage({
   const isAllTime = searchParams.days === 'all'
   const days      = isAllTime ? 0 : Number(searchParams.days ?? 30)
   const adType    = (searchParams.adType ?? 'sp') as 'sp' | 'sb' | 'all'
-  const kwState   = searchParams.state ?? 'all'
   const activeTab = searchParams.tab ?? 'all'
   const isCustom  = !!(searchParams.start && searchParams.end)
   const startStr  = searchParams.start ?? (isAllTime ? '2020-01-01' : dateStr(days))
@@ -83,7 +82,6 @@ export default async function TargetingPage({
   }
 
   let rows = allRows
-  if (kwState !== 'all') rows = rows.filter(r => r.state === kwState)
 
   // Tab counts (from all rows before tab filter)
   const tabCounts = {
@@ -133,23 +131,35 @@ export default async function TargetingPage({
   let negRows: NegRow[] = []
   if (activeProfileId) {
     const empty = { data: [] as any[] }
-    // Negatives: always show only enabled, grouped by campaign name (State pills don't apply here)
-    const [spNegKw, spNegTgt, sbNegKw] = await Promise.all([
+    // Negatives: show those belonging to ENABLED campaigns (by campaign state, not the negative's own state)
+    const [spNegKw, spNegTgt, sbNegKw, enabledCampRes] = await Promise.all([
       adType !== 'sb'
-        ? supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, campaign_name, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).eq('state', 'enabled').range(0, 9999)
+        ? supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, campaign_name, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
         : Promise.resolve(empty),
       adType !== 'sb'
-        ? supabase.from('sp_negative_targets').select('target_id, campaign_id, campaign_name, ad_group_id, expression, state').eq('profile_id', activeProfileId).eq('state', 'enabled').range(0, 9999)
+        ? supabase.from('sp_negative_targets').select('target_id, campaign_id, campaign_name, ad_group_id, expression, state').eq('profile_id', activeProfileId).range(0, 9999)
         : Promise.resolve(empty),
       adType !== 'sp'
-        ? supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, campaign_name, keyword_text, match_type, state').eq('profile_id', activeProfileId).eq('state', 'enabled').range(0, 9999)
+        ? supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, campaign_name, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
         : Promise.resolve(empty),
+      // Most-recent state per campaign (campaign-level state, kept current by syncCampaignStates)
+      Promise.all(campTables.map(t => supabase.from(t).select('campaign_id, state, date')
+        .eq('profile_id', activeProfileId).order('date', { ascending: false }).range(0, 49999))),
     ])
 
+    // Build set of enabled campaign IDs (first row per campaign = most recent state)
+    const campState = new Map<number, string>()
+    for (const { data } of (enabledCampRes as any[])) {
+      for (const c of data ?? []) {
+        if (!campState.has(c.campaign_id)) campState.set(c.campaign_id, (c.state ?? '').toLowerCase())
+      }
+    }
+    const isEnabledCampaign = (cid: number) => campState.get(cid) === 'enabled'
+
     const nm = (r: any) => r.campaign_name || `Campaign ${r.campaign_id}`
-    for (const r of spNegKw.data ?? [])  negRows.push({ ...r, campaignName: nm(r), level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword', adTypeMark: 'SP' })
-    for (const r of spNegTgt.data ?? []) negRows.push({ ...r, campaignName: nm(r), level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target',  adTypeMark: 'SP' })
-    for (const r of sbNegKw.data ?? [])  negRows.push({ ...r, campaignName: nm(r), level: 'Campaign',                                      type: 'keyword', adTypeMark: 'SB' })
+    for (const r of spNegKw.data ?? [])  if (isEnabledCampaign(r.campaign_id)) negRows.push({ ...r, campaignName: nm(r), level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'keyword', adTypeMark: 'SP' })
+    for (const r of spNegTgt.data ?? []) if (isEnabledCampaign(r.campaign_id)) negRows.push({ ...r, campaignName: nm(r), level: r.ad_group_id ? 'Ad Group' : 'Campaign', type: 'target',  adTypeMark: 'SP' })
+    for (const r of sbNegKw.data ?? [])  if (isEnabledCampaign(r.campaign_id)) negRows.push({ ...r, campaignName: nm(r), level: 'Campaign',                                      type: 'keyword', adTypeMark: 'SB' })
   }
 
   const negGrouped = new Map<string, NegRow[]>()
@@ -166,7 +176,6 @@ export default async function TargetingPage({
       profile_id: String(activeProfileId),
       days: isAllTime ? 'all' : String(days),
       adType: adType !== 'sp' ? adType : undefined,
-      state: kwState !== 'all' ? kwState : undefined,
       start: searchParams.start, end: searchParams.end,
       tab: activeTab !== 'all' ? activeTab : undefined,
       ...params,
@@ -194,15 +203,6 @@ export default async function TargetingPage({
                   adType === t
                     ? t === 'sp' ? 'bg-blue-500 text-white' : t === 'sb' ? 'bg-purple-500 text-white' : 'bg-gray-900 text-white'
                     : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}>
-                {label}
-              </Link>
-            ))}
-          </div>
-          {/* State */}
-          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
-            {([['all','All'],['enabled','Enabled'],['paused','Paused'],['archived','Archived']] as const).map(([s, label]) => (
-              <Link key={s} href={buildUrl({ state: s === 'all' ? undefined : s })}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${kwState === s ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800'}`}>
                 {label}
               </Link>
             ))}
@@ -238,7 +238,7 @@ export default async function TargetingPage({
           profileId: String(activeProfileId ?? ''),
           days: isAllTime ? 'all' : String(days),
           adType,
-          state: kwState !== 'all' ? kwState : '',
+          state: '',
           start: searchParams.start ?? '',
           end: searchParams.end ?? '',
         }}

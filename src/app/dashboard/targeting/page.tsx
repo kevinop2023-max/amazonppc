@@ -133,15 +133,17 @@ export default async function TargetingPage({
   let negRows: NegRow[] = []
   if (activeProfileId) {
     const empty = { data: [] as any[] }
-    const spNegKwQ = supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, campaign_name, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
-    const spNegTgtQ = supabase.from('sp_negative_targets').select('target_id, campaign_id, campaign_name, ad_group_id, expression, state').eq('profile_id', activeProfileId).range(0, 9999)
-    const sbNegKwQ = supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, campaign_name, keyword_text, match_type, state').eq('profile_id', activeProfileId).range(0, 9999)
-    // Apply the top-level State filter (All/Enabled/Paused/Archived) to negatives too
-    if (kwState !== 'all') { spNegKwQ.eq('state', kwState); spNegTgtQ.eq('state', kwState); sbNegKwQ.eq('state', kwState) }
+    // Negatives: always show only enabled, grouped by campaign name (State pills don't apply here)
     const [spNegKw, spNegTgt, sbNegKw] = await Promise.all([
-      adType !== 'sb' ? spNegKwQ : Promise.resolve(empty),
-      adType !== 'sb' ? spNegTgtQ : Promise.resolve(empty),
-      adType !== 'sp' ? sbNegKwQ : Promise.resolve(empty),
+      adType !== 'sb'
+        ? supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, campaign_name, ad_group_id, keyword_text, match_type, state').eq('profile_id', activeProfileId).eq('state', 'enabled').range(0, 9999)
+        : Promise.resolve(empty),
+      adType !== 'sb'
+        ? supabase.from('sp_negative_targets').select('target_id, campaign_id, campaign_name, ad_group_id, expression, state').eq('profile_id', activeProfileId).eq('state', 'enabled').range(0, 9999)
+        : Promise.resolve(empty),
+      adType !== 'sp'
+        ? supabase.from('sb_negative_keywords').select('keyword_id, campaign_id, campaign_name, keyword_text, match_type, state').eq('profile_id', activeProfileId).eq('state', 'enabled').range(0, 9999)
+        : Promise.resolve(empty),
     ])
 
     const nm = (r: any) => r.campaign_name || `Campaign ${r.campaign_id}`

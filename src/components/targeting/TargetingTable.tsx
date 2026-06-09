@@ -191,29 +191,29 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
                 return (
                 <>
                   {/* Campaign header — with per-campaign sums */}
-                  <tr key={`h-${campaignName}`} className="bg-gray-50 border-y border-gray-100 font-semibold text-gray-700">
+                  <tr key={`h-${campaignName}`} className="bg-gray-100 border-y border-gray-200 font-bold text-gray-900">
                     {isNeg ? (
                       <td colSpan={4} className="px-4 py-2">
                         <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide truncate">{campaignName}</span>
-                          <span className="text-[10px] text-gray-400 bg-gray-200 rounded px-1.5 py-0.5">{rows.length}</span>
+                          <span className="text-[11px] font-bold text-gray-900 uppercase tracking-wide truncate">{campaignName}</span>
+                          <span className="text-[10px] text-gray-500 bg-gray-200 rounded px-1.5 py-0.5">{rows.length}</span>
                         </div>
                       </td>
                     ) : (
                       <>
                         <td colSpan={4} className="px-4 py-2">
                           <div className="flex items-center gap-2">
-                            <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide truncate">{campaignName}</span>
-                            <span className="text-[10px] text-gray-400 bg-gray-200 rounded px-1.5 py-0.5">{rows.length}</span>
+                            <span className="text-[11px] font-bold text-gray-900 uppercase tracking-wide truncate">{campaignName}</span>
+                            <span className="text-[10px] text-gray-500 bg-gray-200 rounded px-1.5 py-0.5">{rows.length}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-2 text-xs tabular-nums">{tot!.impr.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-xs tabular-nums">{tot!.clicks.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-xs tabular-nums">{fmt$(tot!.spend)}</td>
-                        <td className="px-4 py-2 text-xs tabular-nums">{fmt$(tot!.sales)}</td>
-                        <td className="px-4 py-2 text-xs tabular-nums">{tot!.orders}</td>
-                        <td className={`px-4 py-2 text-xs tabular-nums ${acosColor(totAcos)}`}>{totAcos !== null ? totAcos.toFixed(1) + '%' : '—'}</td>
-                        <td className="px-4 py-2 text-xs tabular-nums">{totCpc !== null ? '$' + totCpc.toFixed(2) : '—'}</td>
+                        <td className="px-4 py-2 text-xs font-bold text-gray-900 tabular-nums">{tot!.impr.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-xs font-bold text-gray-900 tabular-nums">{tot!.clicks.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-xs font-bold text-gray-900 tabular-nums">{fmt$(tot!.spend)}</td>
+                        <td className="px-4 py-2 text-xs font-bold text-gray-900 tabular-nums">{fmt$(tot!.sales)}</td>
+                        <td className="px-4 py-2 text-xs font-bold text-gray-900 tabular-nums">{tot!.orders}</td>
+                        <td className={`px-4 py-2 text-xs font-bold tabular-nums ${acosColor(totAcos)}`}>{totAcos !== null ? totAcos.toFixed(1) + '%' : '—'}</td>
+                        <td className="px-4 py-2 text-xs font-bold text-gray-900 tabular-nums">{totCpc !== null ? '$' + totCpc.toFixed(2) : '—'}</td>
                         <td className="px-4 py-2"></td>
                       </>
                     )}

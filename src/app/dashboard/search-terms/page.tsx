@@ -88,6 +88,18 @@ export default async function SearchTermsPage({
     cvr:    t.clicks > 0 ? Math.round(t.orders / t.clicks * 10000) / 100 : null,
   }))
 
+  // Exclude non-search-term rows: auto match-group placeholders (where Amazon returned no
+  // real query and we fell back to the match group) and bare ASIN placements.
+  const MATCH_GROUPS = new Set(['loose-match', 'close-match', 'substitutes', 'complements'])
+  const isAsin = (s: string) => /^b0[a-z0-9]{8}$/i.test(s.trim())
+  terms = terms.filter(t => {
+    const term = (t.term ?? '').trim().toLowerCase()
+    if (!term) return false
+    if (MATCH_GROUPS.has(term)) return false   // "loose-match" etc. as the search term itself
+    if (isAsin(term)) return false              // bare ASIN placements
+    return true
+  })
+
   if (mode === 'wasted')          terms = terms.filter(t => t.sales === 0 && t.spend >= minSpend).sort((a, b) => b.spend - a.spend)
   else if (mode === 'converters') terms = terms.filter(t => t.orders >= 2 && t.acos !== null && t.acos <= 15).sort((a, b) => b.orders - a.orders)
   else                            terms.sort((a, b) => b.spend - a.spend)

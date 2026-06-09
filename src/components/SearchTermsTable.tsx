@@ -107,14 +107,31 @@ export default function SearchTermsTable({ sortedGroups, campaigns, mode, colCou
                 </tr>
               ) : filteredGroups.map(([campaignName, groupTerms]) => (
                 <>
-                  <tr key={`h-${campaignName}`} className="bg-gray-50 border-y border-gray-100 first:border-t-0">
-                    <td colSpan={colCount} className="px-5 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide truncate">{campaignName}</span>
-                        <span className="text-[10px] text-gray-400 shrink-0 bg-gray-200 rounded px-1.5 py-0.5">{groupTerms.length}</span>
-                      </div>
-                    </td>
-                  </tr>
+                  {(() => {
+                    const gSpend  = groupTerms.reduce((s, t) => s + t.spend, 0)
+                    const gSales  = groupTerms.reduce((s, t) => s + t.sales, 0)
+                    const gOrders = groupTerms.reduce((s, t) => s + t.orders, 0)
+                    const gClicks = groupTerms.reduce((s, t) => s + t.clicks, 0)
+                    const gAcos   = gSales > 0 ? Math.round(gSpend / gSales * 1000) / 10 : null
+                    const gCvr    = gClicks > 0 ? Math.round(gOrders / gClicks * 10000) / 100 : null
+                    return (
+                      <tr key={`h-${campaignName}`} className="bg-gray-100 border-y border-gray-200 first:border-t-0 font-bold text-gray-900">
+                        <td colSpan={3} className="px-5 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-bold text-gray-900 uppercase tracking-wide truncate">{campaignName}</span>
+                            <span className="text-[10px] text-gray-500 shrink-0 bg-gray-200 rounded px-1.5 py-0.5">{groupTerms.length}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">${gSpend.toFixed(2)}</td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">${gSales.toFixed(2)}</td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">{gAcos !== null ? gAcos + '%' : '—'}</td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">{gOrders}</td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">{gClicks}</td>
+                        <td className="px-4 py-2 text-right text-xs tabular-nums">{gCvr !== null ? gCvr + '%' : '—'}</td>
+                        {isWasted && <td className="px-5 py-2"></td>}
+                      </tr>
+                    )
+                  })()}
                   {groupTerms.map((t, i) => (
                     <tr key={`${t.campaignId}-${i}`} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
                       <td className="py-3 font-medium text-gray-900 max-w-xs">

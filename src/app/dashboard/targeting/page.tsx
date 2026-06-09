@@ -74,10 +74,16 @@ export default async function TargetingPage({
       p.spend_cents += r.spend_cents; p.sales_cents += r.sales_cents; p.orders += r.orders
       perfMap.set(r.keyword_id, p)
     }
+    // meta is date DESC. Take most-recent row for name/state/bid, but the most-recent
+    // NON-NULL top_of_search_is (Amazon reports it with a lag, so latest day is often null).
     const metaMap = new Map<number, any>()
-    for (const r of meta) { if (!metaMap.has(r.keyword_id)) metaMap.set(r.keyword_id, r) }
+    const tosMap = new Map<number, number>()
+    for (const r of meta) {
+      if (!metaMap.has(r.keyword_id)) metaMap.set(r.keyword_id, r)
+      if (r.top_of_search_is != null && !tosMap.has(r.keyword_id)) tosMap.set(r.keyword_id, r.top_of_search_is)
+    }
     for (const [, r] of metaMap) {
-      allRows.push({ ...r, ...(perfMap.get(r.keyword_id) ?? { impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0 }), adTypeMark })
+      allRows.push({ ...r, top_of_search_is: tosMap.get(r.keyword_id) ?? null, ...(perfMap.get(r.keyword_id) ?? { impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0 }), adTypeMark })
     }
   }
 

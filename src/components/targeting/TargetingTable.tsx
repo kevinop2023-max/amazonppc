@@ -180,16 +180,43 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
             <tbody>
               {filteredGroups.length === 0 ? (
                 <tr><td colSpan={isNeg ? 4 : 12} className="px-4 py-16 text-center text-sm text-gray-400">No data for this filter.</td></tr>
-              ) : filteredGroups.map(([campaignName, rows]) => (
+              ) : filteredGroups.map(([campaignName, rows]) => {
+                // Per-campaign totals (keyword/target tabs only)
+                const tot = isNeg ? null : (rows as KwRow[]).reduce((a, r) => {
+                  a.impr += r.impressions; a.clicks += r.clicks; a.spend += r.spend_cents
+                  a.sales += r.sales_cents; a.orders += r.orders; return a
+                }, { impr: 0, clicks: 0, spend: 0, sales: 0, orders: 0 })
+                const totAcos = tot && tot.sales > 0 ? tot.spend / tot.sales * 100 : null
+                const totCpc  = tot && tot.clicks > 0 ? tot.spend / tot.clicks / 100 : null
+                return (
                 <>
-                  {/* Campaign header */}
-                  <tr key={`h-${campaignName}`} className="bg-gray-50 border-y border-gray-100">
-                    <td colSpan={isNeg ? 4 : 12} className="px-4 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide truncate">{campaignName}</span>
-                        <span className="text-[10px] text-gray-400 bg-gray-200 rounded px-1.5 py-0.5">{rows.length}</span>
-                      </div>
-                    </td>
+                  {/* Campaign header — with per-campaign sums */}
+                  <tr key={`h-${campaignName}`} className="bg-gray-50 border-y border-gray-100 font-semibold text-gray-700">
+                    {isNeg ? (
+                      <td colSpan={4} className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide truncate">{campaignName}</span>
+                          <span className="text-[10px] text-gray-400 bg-gray-200 rounded px-1.5 py-0.5">{rows.length}</span>
+                        </div>
+                      </td>
+                    ) : (
+                      <>
+                        <td colSpan={4} className="px-4 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-bold text-gray-600 uppercase tracking-wide truncate">{campaignName}</span>
+                            <span className="text-[10px] text-gray-400 bg-gray-200 rounded px-1.5 py-0.5">{rows.length}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-xs tabular-nums">{tot!.impr.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-xs tabular-nums">{tot!.clicks.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-xs tabular-nums">{fmt$(tot!.spend)}</td>
+                        <td className="px-4 py-2 text-xs tabular-nums">{fmt$(tot!.sales)}</td>
+                        <td className="px-4 py-2 text-xs tabular-nums">{tot!.orders}</td>
+                        <td className={`px-4 py-2 text-xs tabular-nums ${acosColor(totAcos)}`}>{totAcos !== null ? totAcos.toFixed(1) + '%' : '—'}</td>
+                        <td className="px-4 py-2 text-xs tabular-nums">{totCpc !== null ? '$' + totCpc.toFixed(2) : '—'}</td>
+                        <td className="px-4 py-2"></td>
+                      </>
+                    )}
                   </tr>
 
                   {/* Rows */}
@@ -245,7 +272,7 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
                                 {kw.clicks > 0 ? '$' + (kw.spend_cents / kw.clicks / 100).toFixed(2) : '—'}
                               </td>
                               <td className="px-4 py-3 text-gray-500 tabular-nums">
-                                {(kw as any).top_of_search_is != null ? ((kw as any).top_of_search_is * 100).toFixed(1) + '%' : '—'}
+                                {(kw as any).top_of_search_is != null ? Number((kw as any).top_of_search_is).toFixed(1) + '%' : '—'}
                               </td>
                             </tr>
                             {isExpanded && (
@@ -284,7 +311,8 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
                       })
                   }
                 </>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

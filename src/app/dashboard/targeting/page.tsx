@@ -50,7 +50,7 @@ export default async function TargetingPage({
   async function fetchKw(table: 'sp_keywords' | 'sb_keywords', adTypeMark: string) {
     if (!activeProfileId) return { meta: [], perf: [], adTypeMark }
     const [{ data: meta }, { data: perf }] = await Promise.all([
-      supabase.from(table).select('keyword_id, campaign_id, keyword_text, match_type, state, bid_cents')
+      supabase.from(table).select('keyword_id, campaign_id, keyword_text, match_type, state, bid_cents, top_of_search_is')
         .eq('profile_id', activeProfileId).order('date', { ascending: false }).range(0, 49999),
       supabase.from(table).select('keyword_id, impressions, clicks, spend_cents, sales_cents, orders')
         .eq('profile_id', activeProfileId).gte('date', startStr).lte('date', endStr).range(0, 49999),

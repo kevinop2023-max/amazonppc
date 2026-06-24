@@ -173,9 +173,10 @@ async function upsertSpSearchTerms(db: any, pid: number, rows: any[]) {
 
 async function upsertSbCampaigns(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
-  // Omit sales_cents/orders/units — SB_CAMP doesn't report them; including 0 would overwrite sbAttr data.
-  // updateSbCampaignSales (sbAttr report) owns those columns.
-  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost) }))
+  // v3 sbCampaigns provides CLICK-attributed sales/purchases/unitsSold directly (verified 2026-06-24).
+  // This replaces the old purchase-date sbPurchasedProduct workaround, so SB sales now match Amazon's
+  // click-date dashboard attribution.
+  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales), orders: n(r.purchases), units: n(r.unitsSold) }))
   const { error } = await db.from('sb_campaigns').upsert(r, { onConflict: 'profile_id,campaign_id,date' })
   if (error) throw new Error(`sb_campaigns: ${error.message}`)
   return r.length
@@ -715,8 +716,9 @@ Deno.serve(async (req) => {
     const sbCampN = await upsertSbCampaigns(db,  pid, dataMap['sbCamp'] ?? []); sbTotal += sbCampN
     const sbKwN   = await upsertSbKeywords(db,   pid, dataMap['sbKw']   ?? []); sbTotal += sbKwN
     const sbStN   = await upsertSbSearchTerms(db,pid, dataMap['sbSt']   ?? []); sbTotal += sbStN
-    // sbAttr: aggregate purchased-product rows by campaign+date, UPDATE (or INSERT) sb_campaigns sales/orders
-    const sbAttrN = await updateSbCampaignSales(db, pid, dataMap['sbAttr'] ?? [], dataMap['sbCamp'] ?? []); sbTotal += sbAttrN
+    // SB sales now come click-attributed from sbCampaigns (upsertSbCampaigns above).
+    // The purchase-date sbPurchasedProduct workaround (updateSbCampaignSales) is retired.
+    const sbAttrN = 0
     const sdCampN = await upsertSdCampaigns(db,  pid, dataMap['sdCamp'] ?? []); sdTotal += sdCampN
 
     const total = spTotal + sbTotal + sdTotal

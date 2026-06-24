@@ -375,7 +375,8 @@ Deno.serve(async (req) => {
     // SP_ST: include both 'searchTerm' (customer query) and 'targeting' (keyword/ASIN expression that matched)
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','searchTerm','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SB spend/clicks report — sales columns not supported at campaign level
-    const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
+    // sales/purchases/unitsSold = click-attributed (v3). Verifying these are valid + populated for sbCampaigns.
+    const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','sales','purchases','unitsSold']
     // SB_KW: sales columns not supported by sbTargeting in v3 — media metrics only.
     // SB keyword text: 'keywordText' (not 'keyword' which is SP-specific). 'targetingText' for ASIN/product target rows.
     const SB_KW   = ['date','campaignId','adGroupId','keywordId','keywordText','matchType','adKeywordStatus','keywordBid','targetingText','topOfSearchImpressionShare','impressions','clicks','cost']

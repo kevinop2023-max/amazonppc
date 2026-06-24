@@ -115,8 +115,9 @@ async function fetchCampaignList(token: string, pid: string, path: string, media
   }
   const all: any[] = []
   let nextToken: string | null = null
-  for (let page = 0; page < 50; page++) {
-    const body: any = { maxResults: 500, stateFilter: { include: ['ENABLED', 'PAUSED', 'ARCHIVED'] } }
+  for (let page = 0; page < 100; page++) {
+    // maxResults 100 — SB v4 rejects larger values (SP v3 allows more, but 100 is safe for both)
+    const body: any = { maxResults: 100, stateFilter: { include: ['ENABLED', 'PAUSED', 'ARCHIVED'] } }
     if (nextToken) body.nextToken = nextToken
     const res = await fetch(`${AMAZON_ADS_BASE}${path}`, { method: 'POST', headers: h, body: JSON.stringify(body) })
     if (!res.ok) { console.log(`[sync] campaign-list ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }

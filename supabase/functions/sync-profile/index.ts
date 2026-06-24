@@ -102,6 +102,33 @@ async function createReport(token: string, pid: string, name: string, adProduct:
 // ALL campaigns (including paused/archived) for today's date. Today's date is
 // after endStr (= yesterday), so it is excluded from performance aggregations
 // but included in the meta (all-time) query used for state filtering.
+// Shared v3/v4 campaign-list fetch (POST /list, nextToken pagination). Returns all states.
+// SP: /sp/campaigns/list + spCampaign.v3 (budget nested: c.budget.budget)
+// SB: /sb/v4/campaigns/list + sbCampaign.v4 (budget flat: c.budget)
+async function fetchCampaignList(token: string, pid: string, path: string, mediaType: string): Promise<any[]> {
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
+    'Amazon-Advertising-API-Scope': pid,
+    'Content-Type': `application/vnd.${mediaType}+json`,
+    'Accept': `application/vnd.${mediaType}+json`,
+  }
+  const all: any[] = []
+  let nextToken: string | null = null
+  for (let page = 0; page < 50; page++) {
+    const body: any = { maxResults: 500, stateFilter: { include: ['ENABLED', 'PAUSED', 'ARCHIVED'] } }
+    if (nextToken) body.nextToken = nextToken
+    const res = await fetch(`${AMAZON_ADS_BASE}${path}`, { method: 'POST', headers: h, body: JSON.stringify(body) })
+    if (!res.ok) { console.log(`[sync] campaign-list ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }
+    const data = await res.json()
+    const rows = data.campaigns ?? []
+    all.push(...rows)
+    nextToken = data.nextToken ?? null
+    if (!nextToken) break
+  }
+  return all
+}
+
 async function syncCampaignStates(token: string, pid: string, db: any, numericPid: number) {
   const today = new Date().toISOString().split('T')[0]
   const h: Record<string, string> = {
@@ -129,8 +156,9 @@ async function syncCampaignStates(token: string, pid: string, db: any, numericPi
   }
 
   const [sp, sb, sd] = await Promise.all([
-    listAll('/v2/sp/campaigns').catch(e => { console.log(`[sync] sp-list: ${e}`); return [] }),
-    listAll('/sb/campaigns').catch(e    => { console.log(`[sync] sb-list: ${e}`); return [] }),
+    // SP → v3 POST /list (budget nested), SB → v4 POST /list (budget flat), SD → legacy GET (no v3/v4 POST)
+    fetchCampaignList(token, pid, '/sp/campaigns/list', 'spCampaign.v3').catch(e => { console.log(`[sync] sp-list: ${e}`); return [] }),
+    fetchCampaignList(token, pid, '/sb/v4/campaigns/list', 'sbCampaign.v4').catch(e => { console.log(`[sync] sb-list: ${e}`); return [] }),
     listAll('/sd/campaigns').catch(e    => { console.log(`[sync] sd-list: ${e}`); return [] }),
   ])
 
@@ -143,25 +171,25 @@ async function syncCampaignStates(token: string, pid: string, db: any, numericPi
   }
 
   const state = (v: any) => String(v ?? 'enabled').toLowerCase()
-  const budget = (v: any) => v ? Math.round(Number(v) * 100) : 0
+  const budgetCents = (v: any) => v ? Math.round(Number(v) * 100) : 0
 
   await Promise.all([
-    upsert('sp_campaigns', sp.map(c => ({
+    upsert('sp_campaigns', sp.map(c => ({          // v3: budget nested under c.budget.budget
       profile_id: numericPid, campaign_id: Number(c.campaignId), date: today,
       campaign_name: c.name ?? '', state: state(c.state),
-      daily_budget_cents: budget(c.dailyBudget),
+      daily_budget_cents: budgetCents(c.budget?.budget),
       impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0, units: 0,
     }))),
-    upsert('sb_campaigns', sb.map(c => ({
+    upsert('sb_campaigns', sb.map(c => ({          // v4: budget flat on c.budget
       profile_id: numericPid, campaign_id: Number(c.campaignId), date: today,
       campaign_name: c.name ?? '', state: state(c.state),
-      daily_budget_cents: budget(c.dailyBudget),
+      daily_budget_cents: budgetCents(c.budget),
       impressions: 0, clicks: 0, spend_cents: 0,
     }))),
-    upsert('sd_campaigns', sd.map(c => ({
+    upsert('sd_campaigns', sd.map(c => ({          // legacy GET: budget on c.dailyBudget
       profile_id: numericPid, campaign_id: Number(c.campaignId), date: today,
       campaign_name: c.name ?? '', state: state(c.state),
-      daily_budget_cents: budget(c.dailyBudget),
+      daily_budget_cents: budgetCents(c.dailyBudget),
       impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0, units: 0,
     }))),
   ])
@@ -232,39 +260,14 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
   ])
 
   // Fetch campaign id→name for ALL campaigns (incl. archived) so negatives on old campaigns get real names.
-  // sp_campaigns only has campaigns with recent perf data; many negatives belong to archived campaigns.
+  // SP via v3 list, SB via v4 list (shared helper, nextToken pagination).
   const campNames = new Map<number, string>()
-  // SP campaigns via v3 list (all states)
-  try {
-    let nextToken: string | null = null
-    for (let page = 0; page < 50; page++) {
-      const body: any = { maxResults: 500, stateFilter: { include: ['ENABLED', 'PAUSED', 'ARCHIVED'] } }
-      if (nextToken) body.nextToken = nextToken
-      const res = await fetch(`${AMAZON_ADS_BASE}/sp/campaigns/list`, {
-        method: 'POST',
-        headers: { ...baseH, 'Content-Type': 'application/vnd.spCampaign.v3+json', 'Accept': 'application/vnd.spCampaign.v3+json' },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) { console.log(`[sync] sp campaign-names: HTTP ${res.status}`); break }
-      const data = await res.json()
-      for (const c of data.campaigns ?? []) campNames.set(Number(c.campaignId), c.name ?? '')
-      nextToken = data.nextToken ?? null
-      if (!nextToken) break
-    }
-  } catch (e) { console.log(`[sync] sp campaign-names: ${e}`) }
-  // SB campaigns via v2 GET
-  try {
-    let start = 0
-    for (let page = 0; page < 30; page++) {
-      const res = await fetch(`${AMAZON_ADS_BASE}/sb/campaigns?stateFilter=enabled,paused,archived&count=100&startIndex=${start}`, { headers: baseH })
-      if (!res.ok) break
-      const arr = await res.json()
-      if (!Array.isArray(arr) || !arr.length) break
-      for (const c of arr) campNames.set(Number(c.campaignId), c.name ?? '')
-      if (arr.length < 100) break
-      start += 100
-    }
-  } catch (e) { console.log(`[sync] sb campaign-names: ${e}`) }
+  const [spCamps, sbCamps] = await Promise.all([
+    fetchCampaignList(token, pid, '/sp/campaigns/list', 'spCampaign.v3').catch(e => { console.log(`[sync] sp campaign-names: ${e}`); return [] }),
+    fetchCampaignList(token, pid, '/sb/v4/campaigns/list', 'sbCampaign.v4').catch(e => { console.log(`[sync] sb campaign-names: ${e}`); return [] }),
+  ])
+  for (const c of spCamps) campNames.set(Number(c.campaignId), c.name ?? '')
+  for (const c of sbCamps) campNames.set(Number(c.campaignId), c.name ?? '')
   const cname = (id: number) => campNames.get(id) ?? null
 
   const upsertNeg = async (table: string, conflictCol: string, rows: object[]) => {

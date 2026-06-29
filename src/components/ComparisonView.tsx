@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import PerformanceChart from './PerformanceChart'
 import type { DayData } from './PerformanceChart'
 import CombinedPerformanceChart from './CombinedPerformanceChart'
+import CampaignPerformanceChart from './CampaignPerformanceChart'
+import ChangesView, { type ChangeEvent as CompChange } from './ChangesView'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -40,6 +42,7 @@ interface Props {
   earliestDate: string | null
   chartDataA: DayData[]
   chartDataB: DayData[]
+  changeEvents: CompChange[]
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1019,9 +1022,94 @@ function OverlapTab({ keywords, terms }: { keywords: KwComp[]; terms: TermComp[]
   )
 }
 
+// ── Change Impact panel (Comparison v2) ───────────────────────────────────────
+
+const CHG_FIELD_LBL: Record<string, string> = {
+  BID_AMOUNT: 'Keyword bid', DEFAULT_BID_AMOUNT: 'Ad group bid', BUDGET_AMOUNT: 'Budget',
+  PLACEMENT_TOP: 'Top-of-search', PLACEMENT_PRODUCT_PAGE: 'Product-page', PLACEMENT_REST_OF_SEARCH: 'Rest-of-search',
+  SMART_BIDDING_STRATEGY: 'Strategy', STATUS: 'Status', IN_BUDGET: 'In-budget',
+}
+
+function chgMarkerLabel(e: CompChange): string {
+  const lbl = CHG_FIELD_LBL[e.field] ?? e.field
+  const who = e.entityName.length > 22 ? e.entityName.slice(0, 22) + '…' : e.entityName
+  if (['BID_AMOUNT', 'DEFAULT_BID_AMOUNT', 'BUDGET_AMOUNT'].includes(e.field))
+    return `${who} · ${lbl} ${fmtD(Number(e.old_value))}→${fmtD(Number(e.new_value))}`
+  if (e.field.startsWith('PLACEMENT_')) return `${who} · ${lbl} ${e.old_value}%→${e.new_value}%`
+  return `${who} · ${lbl} ${e.old_text ?? '—'}→${e.new_text ?? '—'}`
+}
+
+function ChangeImpactPanel({ changeEvents, chartDataB, totals, labelB }: {
+  changeEvents: CompChange[]; chartDataB: DayData[]
+  totals: { aSpend: number; bSpend: number; aSales: number; bSales: number; aOrders: number; bOrders: number; aAcos: number | null; bAcos: number | null }
+  labelB: string
+}) {
+  const [showAll, setShowAll] = useState(false)
+
+  // Restrict to events that fall on a day visible in the B chart
+  const bDates = useMemo(() => new Set(chartDataB.map(d => d.date)), [chartDataB])
+  const bEvents = useMemo(() => changeEvents.filter(e => bDates.has(String(e.event_ts).slice(0, 10))), [changeEvents, bDates])
+
+  const markers = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const e of bEvents) { const d = String(e.event_ts).slice(0, 10); if (!m.has(d)) m.set(d, []); m.get(d)!.push(chgMarkerLabel(e)) }
+    return [...m.entries()].map(([date, labels]) => ({ date, labels }))
+  }, [bEvents])
+
+  const count = (pred: (e: CompChange) => boolean) => bEvents.filter(pred).length
+  const chips = [
+    { label: 'Bid changes',       n: count(e => ['BID_AMOUNT', 'DEFAULT_BID_AMOUNT'].includes(e.field)), cls: 'bg-blue-50 text-blue-700' },
+    { label: 'Budget changes',    n: count(e => e.field === 'BUDGET_AMOUNT'),                              cls: 'bg-orange-50 text-orange-700' },
+    { label: 'Placement changes', n: count(e => e.field.startsWith('PLACEMENT_')),                        cls: 'bg-teal-50 text-teal-700' },
+    { label: 'Strategy changes',  n: count(e => e.field === 'SMART_BIDDING_STRATEGY'),                    cls: 'bg-purple-50 text-purple-700' },
+    { label: 'Status changes',    n: count(e => ['STATUS', 'IN_BUDGET'].includes(e.field)),               cls: 'bg-gray-100 text-gray-600' },
+  ].filter(c => c.n > 0)
+
+  const spendD = pctChg(totals.aSpend, totals.bSpend)
+  const salesD = pctChg(totals.aSales, totals.bSales)
+  const acosD  = totals.aAcos !== null && totals.bAcos !== null ? totals.bAcos - totals.aAcos : null
+  const sign = (v: number | null, suffix: string) => v === null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}${suffix}`
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-gray-700">What changed in period B <span className="font-normal text-gray-400">— and how performance moved</span></h2>
+        {bEvents.length > 0 && (
+          <button onClick={() => setShowAll(s => !s)} className="text-xs font-semibold text-orange-600 hover:text-orange-700">
+            {showAll ? 'Hide change list' : `Explore all ${bEvents.length} changes`}
+          </button>
+        )}
+      </div>
+
+      {/* Insight line + chips */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-gray-500">
+          A→B: spend <b className="text-gray-700">{sign(spendD, '%')}</b>, sales <b className="text-gray-700">{sign(salesD, '%')}</b>, ACoS <b className={acosD !== null && acosD < 0 ? 'text-emerald-600' : 'text-gray-700'}>{sign(acosD, 'pp')}</b>
+        </span>
+        <span className="text-gray-300">·</span>
+        {chips.length === 0
+          ? <span className="text-xs text-gray-400">No changes recorded in this window</span>
+          : chips.map(c => <span key={c.label} className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${c.cls}`}>{c.n} {c.label}</span>)}
+      </div>
+
+      {/* B performance with change markers */}
+      <CampaignPerformanceChart
+        daily={chartDataB.map(d => ({ date: d.date, spendCents: d.spendCents, salesCents: d.salesCents, clicks: d.clicks, orders: d.orders }))}
+        markers={markers}
+      />
+
+      {showAll && bEvents.length > 0 && (
+        <div className="pt-2 border-t border-gray-100">
+          <ChangesView events={bEvents} source={bEvents.some(e => e.source === 'api') ? 'mixed' : 'snapshot'} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms, keywords, earliestDate, chartDataA, chartDataB }: Props) {
+export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, camps, terms, keywords, earliestDate, chartDataA, chartDataB, changeEvents }: Props) {
   const router = useRouter()
   const [tab, setTab] = useState<'overview' | 'campaigns' | 'search-terms' | 'keywords' | 'overlap'>('campaigns')
   const [as, setAs] = useState(aStart); const [ae, setAe] = useState(aEnd)
@@ -1192,6 +1280,9 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
         <PerformanceChart data={chartDataA} title={`Period A: ${labelA}`} />
         <PerformanceChart data={chartDataB} title={`Period B: ${labelB}`} />
       </div>
+
+      {/* Change Impact — what changed in B, overlaid on performance (Comparison v2) */}
+      <ChangeImpactPanel changeEvents={changeEvents} chartDataB={chartDataB} totals={totals} labelB={labelB} />
 
       {/* Tabs */}
       <div className="border-b border-gray-100">

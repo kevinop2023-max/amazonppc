@@ -147,6 +147,38 @@ async function upsertSpKeywords(db: any, pid: number, rows: any[]) {
   return r.length
 }
 
+// Ad-group performance (spCampaigns groupBy adGroup). No campaignId at this grain →
+// backfill it from the sp_ad_groups snapshot map.
+async function upsertAdGroupPerf(db: any, pid: number, rows: any[]) {
+  if (!rows.length) return 0
+  const { data: ags } = await db.from('sp_ad_groups').select('ad_group_id, campaign_id').eq('profile_id', pid).range(0, 49999)
+  const campOf = new Map<number, number>()
+  for (const a of ags ?? []) { const k = n(a.ad_group_id); if (!campOf.has(k)) campOf.set(k, n(a.campaign_id)) }
+  const r = rows.filter(x => x.adGroupId).map(x => ({
+    profile_id: pid, ad_group_id: n(x.adGroupId), campaign_id: campOf.get(n(x.adGroupId)) ?? null, date: x.date,
+    ad_group_name: x.adGroupName ?? '', impressions: n(x.impressions), clicks: n(x.clicks),
+    spend_cents: toCents(x.cost), sales_cents: toCents(x.sales14d), orders: n(x.purchases14d), units: n(x.unitsSoldClicks14d),
+  }))
+  if (!r.length) return 0
+  const { error } = await db.from('ad_group_performance').upsert(r, { onConflict: 'profile_id,ad_group_id,date' })
+  if (error) { console.error(`ad_group_performance: ${error.message}`); return 0 }
+  return r.length
+}
+
+// Placement performance (spCampaigns groupBy campaignPlacement).
+async function upsertPlacementPerf(db: any, pid: number, rows: any[]) {
+  if (!rows.length) return 0
+  const r = rows.filter(x => x.campaignId && x.placementClassification).map(x => ({
+    profile_id: pid, campaign_id: n(x.campaignId), date: x.date, placement: x.placementClassification,
+    impressions: n(x.impressions), clicks: n(x.clicks), spend_cents: toCents(x.cost),
+    sales_cents: toCents(x.sales14d), orders: n(x.purchases14d), units: n(x.unitsSoldClicks14d),
+  }))
+  if (!r.length) return 0
+  const { error } = await db.from('placement_performance').upsert(r, { onConflict: 'profile_id,campaign_id,date,placement' })
+  if (error) { console.error(`placement_performance: ${error.message}`); return 0 }
+  return r.length
+}
+
 async function upsertSpSearchTerms(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
   // Deduplicate: same search term can appear multiple times (multiple keywords match it)
@@ -623,7 +655,7 @@ Deno.serve(async (req) => {
     // Check all report statuses in parallel (single round, no loop)
     // SB sub-reports (sbAttr, sbKw, sbSt) are optional — Amazon throttles them independently.
     // Missing any of these doesn't warrant 'partial'; prior data stays intact via upsert.
-    const OPTIONAL_REPORTS = ['sbAttr', 'sbKw', 'sbSt']
+    const OPTIONAL_REPORTS = ['sbAttr', 'sbKw', 'sbSt', 'spAg', 'spPlace']
     for (const name of OPTIONAL_REPORTS) {
       if (!ids[name]) console.log(`[poll] ${name} skipped (Amazon throttle) — prior data preserved`)
     }
@@ -673,7 +705,7 @@ Deno.serve(async (req) => {
     // All done — download and upsert
     console.log(`[poll] All reports ready. Downloading ${completed.length} reports...`)
 
-    const nameMap: Record<string, string> = { spCamp: 'SP Campaigns', spKw: 'SP Keywords', spSt: 'SP Terms', sbCamp: 'SB Campaigns', sbKw: 'SB Keywords', sbSt: 'SB Terms', sbAttr: 'SB Attr Purchases', sdCamp: 'SD Campaigns' }
+    const nameMap: Record<string, string> = { spCamp: 'SP Campaigns', spKw: 'SP Keywords', spSt: 'SP Terms', sbCamp: 'SB Campaigns', sbKw: 'SB Keywords', sbSt: 'SB Terms', sbAttr: 'SB Attr Purchases', sdCamp: 'SD Campaigns', spAg: 'SP Ad Groups', spPlace: 'SP Placements' }
     const dataMap: Record<string, any[]> = {}
 
     await Promise.all(
@@ -720,6 +752,9 @@ Deno.serve(async (req) => {
     // The purchase-date sbPurchasedProduct workaround (updateSbCampaignSales) is retired.
     const sbAttrN = 0
     const sdCampN = await upsertSdCampaigns(db,  pid, dataMap['sdCamp'] ?? []); sdTotal += sdCampN
+    const spAgN    = await upsertAdGroupPerf(db,   pid, dataMap['spAg']    ?? []); spTotal += spAgN
+    const spPlaceN = await upsertPlacementPerf(db, pid, dataMap['spPlace'] ?? []); spTotal += spPlaceN
+    console.log(`[poll] upserted perf — spAg:${spAgN} spPlace:${spPlaceN}`)
 
     const total = spTotal + sbTotal + sdTotal
     console.log(`[poll] upserted — spCamp:${spCampN} spKw:${spKwN} spSt:${spStN} sbCamp:${sbCampN} sbKw:${sbKwN} sbSt:${sbStN} sbAttr:${sbAttrN} sdCamp:${sdCampN}`)
@@ -736,6 +771,14 @@ Deno.serve(async (req) => {
     }).eq('id', log.id)
 
     await generateAlerts(db, pid)
+
+    // Snapshot-diff fresh data into change_events (bid/budget/status history).
+    // Idempotent (ON CONFLICT DO NOTHING); non-fatal. Hybrid fallback while the
+    // Amazon Change History API (POST /history) is not yet entitled — see D-017.
+    try {
+      const { error: diffErr } = await db.rpc('diff_snapshots_to_change_events', { p_profile: pid })
+      if (diffErr) console.log(`[poll] change-events diff: ${diffErr.message}`)
+    } catch (e) { console.log(`[poll] change-events diff skipped: ${e}`) }
 
     console.log(`[poll] Done — ${total} records upserted`)
     return new Response(JSON.stringify({ status: 'success', records_upserted: total }), {

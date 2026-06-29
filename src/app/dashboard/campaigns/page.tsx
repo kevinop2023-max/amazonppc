@@ -269,7 +269,10 @@ export default async function CampaignsPage({
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2 max-w-xs">
                       <AdTypePill type={c.ad_type} />
-                      <span className="font-medium text-gray-900 truncate text-sm" title={c.name}>{c.name}</span>
+                      <Link
+                        href={`/dashboard/campaigns/${c.campaign_id}?profile_id=${profileId}&type=${c.ad_type}&days=${isAllTime ? 'all' : days}`}
+                        className="font-medium text-gray-900 hover:text-orange-600 hover:underline truncate text-sm" title={c.name}
+                      >{c.name}</Link>
                       {c.state !== 'enabled' && (
                         <span className="text-[10px] text-gray-400 shrink-0">({c.state})</span>
                       )}

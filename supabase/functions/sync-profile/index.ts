@@ -105,7 +105,7 @@ async function createReport(token: string, pid: string, name: string, adProduct:
 // Shared v3/v4 campaign-list fetch (POST /list, nextToken pagination). Returns all states.
 // SP: /sp/campaigns/list + spCampaign.v3 (budget nested: c.budget.budget)
 // SB: /sb/v4/campaigns/list + sbCampaign.v4 (budget flat: c.budget)
-async function fetchCampaignList(token: string, pid: string, path: string, mediaType: string): Promise<any[]> {
+async function fetchCampaignList(token: string, pid: string, path: string, mediaType: string, dataKey = 'campaigns'): Promise<any[]> {
   const h: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
@@ -120,9 +120,9 @@ async function fetchCampaignList(token: string, pid: string, path: string, media
     const body: any = { maxResults: 100, stateFilter: { include: ['ENABLED', 'PAUSED', 'ARCHIVED'] } }
     if (nextToken) body.nextToken = nextToken
     const res = await fetch(`${AMAZON_ADS_BASE}${path}`, { method: 'POST', headers: h, body: JSON.stringify(body) })
-    if (!res.ok) { console.log(`[sync] campaign-list ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }
+    if (!res.ok) { console.log(`[sync] list ${path}: HTTP ${res.status} ${await res.text().catch(() => '')}`); break }
     const data = await res.json()
-    const rows = data.campaigns ?? []
+    const rows = data[dataKey] ?? []
     all.push(...rows)
     nextToken = data.nextToken ?? null
     if (!nextToken) break
@@ -156,11 +156,13 @@ async function syncCampaignStates(token: string, pid: string, db: any, numericPi
     return all
   }
 
-  const [sp, sb, sd] = await Promise.all([
+  const [sp, sb, sd, spAdGroups] = await Promise.all([
     // SP → v3 POST /list (budget nested), SB → v4 POST /list (budget flat), SD → legacy GET (no v3/v4 POST)
     fetchCampaignList(token, pid, '/sp/campaigns/list', 'spCampaign.v3').catch(e => { console.log(`[sync] sp-list: ${e}`); return [] }),
     fetchCampaignList(token, pid, '/sb/v4/campaigns/list', 'sbCampaign.v4').catch(e => { console.log(`[sync] sb-list: ${e}`); return [] }),
     listAll('/sd/campaigns').catch(e    => { console.log(`[sync] sd-list: ${e}`); return [] }),
+    // SP ad groups (spAdGroup.v3) — for default-bid change history + hierarchy
+    fetchCampaignList(token, pid, '/sp/adGroups/list', 'spAdGroup.v3', 'adGroups').catch(e => { console.log(`[sync] sp-adgroups: ${e}`); return [] }),
   ])
 
   const upsert = async (table: string, rows: object[]) => {
@@ -173,12 +175,23 @@ async function syncCampaignStates(token: string, pid: string, db: any, numericPi
 
   const state = (v: any) => String(v ?? 'enabled').toLowerCase()
   const budgetCents = (v: any) => v ? Math.round(Number(v) * 100) : 0
+  // SP placement bid multiplier (percent) for a given placement key; 0 = no adjustment set
+  // (so the snapshot-diff can detect adjustments being added/removed). dynamicBidding.placementBidding = [{placement, percentage}]
+  const placementPct = (c: any, key: string) => {
+    const arr = c?.dynamicBidding?.placementBidding ?? []
+    const m = arr.find((x: any) => x.placement === key)
+    return m ? Number(m.percentage) : 0
+  }
 
   await Promise.all([
     upsert('sp_campaigns', sp.map(c => ({          // v3: budget nested under c.budget.budget
       profile_id: numericPid, campaign_id: Number(c.campaignId), date: today,
       campaign_name: c.name ?? '', state: state(c.state),
       daily_budget_cents: budgetCents(c.budget?.budget),
+      bidding_strategy: c.dynamicBidding?.strategy ?? null,
+      placement_top_pct:     placementPct(c, 'PLACEMENT_TOP'),
+      placement_product_pct: placementPct(c, 'PLACEMENT_PRODUCT_PAGE'),
+      placement_rest_pct:    placementPct(c, 'PLACEMENT_REST_OF_SEARCH'),
       impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0, units: 0,
     }))),
     upsert('sb_campaigns', sb.map(c => ({          // v4: budget flat on c.budget
@@ -194,6 +207,19 @@ async function syncCampaignStates(token: string, pid: string, db: any, numericPi
       impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0, units: 0,
     }))),
   ])
+
+  // SP ad-group daily snapshot (default bid + state) — for default-bid change history.
+  if (spAdGroups.length) {
+    const agRows = spAdGroups.map((a: any) => ({
+      profile_id: numericPid, ad_group_id: Number(a.adGroupId), campaign_id: Number(a.campaignId), date: today,
+      ad_group_name: a.name ?? '', state: state(a.state),
+      default_bid_cents: budgetCents(a.defaultBid),   // defaultBid is in marketplace currency (dollars)
+      impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0, units: 0,
+    }))
+    const { error } = await (db as any).from('sp_ad_groups').upsert(agRows, { onConflict: 'profile_id,ad_group_id,date', ignoreDuplicates: true })
+    if (error) console.log(`[sync] sp_ad_groups upsert: ${error.message}`)
+    else console.log(`[sync] ad-group snapshot: ${agRows.length} rows`)
+  }
 }
 
 // ── Negative keyword + target snapshot ───────────────────────────────────────
@@ -313,16 +339,187 @@ async function syncNegativeKeywords(token: string, pid: string, db: any, numeric
   console.log(`[sync] negatives — spCampKw:${spCampNegKw.length} spAdGrpKw:${spAdGrpNegKw.length} spTgt:${spNegTgt.length} sbKw:${sbNegKw.length}`)
 }
 
+// ── Change history ingest (Amazon /history API) ───────────────────────────────
+// Amazon exposes a REAL change-history API (POST /history) for SP + SB: campaign,
+// ad group, keyword, target, negative-keyword changes — with exact previous→new
+// values and real edit timestamps, up to 90 days back. (SD is NOT covered.)
+// We store every event in `change_events`. First run for a profile = 90-day
+// backfill; subsequent runs = incremental from the latest stored event_ts (with a
+// 1-day overlap; the UNIQUE constraint makes re-ingest idempotent).
+// Response event shape (confirmed from docs):
+//   { changeType, entityType, entityId, metadata, previousValue, newValue, timestamp }
+// Value semantics by changeType: amounts (BID_AMOUNT/BUDGET_AMOUNT/DEFAULT_BID_AMOUNT)
+//   = marketplace-currency dollars (→ store cents); PLACEMENT_GROUP = percent;
+//   STATUS/SMART_BIDDING_STRATEGY/NAME/IN_BUDGET/dates = text.
+const HISTORY_AMOUNT_FIELDS = new Set(['BID_AMOUNT', 'BUDGET_AMOUNT', 'DEFAULT_BID_AMOUNT'])
+
+function mapHistoryEvent(ev: any, numericPid: number): any | null {
+  const ts = Number(ev?.timestamp)
+  if (!ts || !ev?.entityType || ev?.entityId == null || !ev?.changeType) return null
+  const field = String(ev.changeType)
+  const entityType = String(ev.entityType)
+  const md = ev.metadata ?? null
+
+  const parseNum = (v: any) => {
+    if (v == null || v === '') return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+
+  let old_value: number | null = null, new_value: number | null = null
+  if (HISTORY_AMOUNT_FIELDS.has(field)) {
+    const o = parseNum(ev.previousValue), n = parseNum(ev.newValue)
+    old_value = o == null ? null : Math.round(o * 100)   // dollars → cents
+    new_value = n == null ? null : Math.round(n * 100)
+  } else if (field === 'PLACEMENT_GROUP') {
+    old_value = parseNum(ev.previousValue)               // percent multiplier
+    new_value = parseNum(ev.newValue)
+  }
+
+  // metadata field names not yet confirmed → best-effort parent linkage, raw kept in metadata.
+  const mdGet = (k: string) => (md && md[k] != null ? String(md[k]) : null)
+  const eid = String(ev.entityId)
+
+  return {
+    profile_id: numericPid,
+    ad_type: null,                                       // not in event; backfilled later if metadata exposes it
+    entity_type: entityType,
+    entity_id: eid,
+    campaign_id: mdGet('campaignId') ?? (entityType === 'CAMPAIGN' ? eid : null),
+    ad_group_id: mdGet('adGroupId') ?? (entityType === 'AD_GROUP' ? eid : null),
+    field,
+    old_value, new_value,
+    old_text: ev.previousValue != null ? String(ev.previousValue) : null,
+    new_text: ev.newValue != null ? String(ev.newValue) : null,
+    event_ts: new Date(ts).toISOString(),
+    metadata: md,
+  }
+}
+
+async function syncChangeHistory(token: string, pid: string, db: any, numericPid: number) {
+  const now = Date.now()
+  // 90 days is the hard API limit; Amazon rejects fromDate even microseconds past it
+  // (request latency pushes an exact -90d value over the edge). Stay 1 hour inside.
+  const MAX_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000
+
+  // Incremental window: from latest stored event (minus 1-day overlap), else 90-day backfill.
+  let fromMs = now - MAX_LOOKBACK_MS
+  const { data: latest } = await db.from('change_events')
+    .select('event_ts').eq('profile_id', numericPid)
+    .order('event_ts', { ascending: false }).limit(1).maybeSingle()
+  if (latest?.event_ts) {
+    fromMs = Math.max(fromMs, new Date(latest.event_ts).getTime() - 24 * 60 * 60 * 1000)
+  }
+  const toMs = now
+
+  // Request filters use the request-side enum (DEFAULT_BID_AMOUNT is requested as BID_AMOUNT for AD_GROUP).
+  const eventTypes: Record<string, any> = {
+    CAMPAIGN:          { filters: ['STATUS', 'IN_BUDGET', 'BUDGET_AMOUNT', 'NAME', 'START_DATE', 'END_DATE', 'SMART_BIDDING_STRATEGY', 'PLACEMENT_GROUP'] },
+    AD_GROUP:          { filters: ['STATUS', 'NAME', 'BID_AMOUNT'] },
+    KEYWORD:           { filters: ['STATUS', 'BID_AMOUNT'] },
+    PRODUCT_TARGETING: { filters: ['STATUS', 'BID_AMOUNT'] },
+    NEGATIVE_KEYWORD:  { filters: ['STATUS'] },
+    AD:                { filters: ['STATUS'] },
+  }
+
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
+    'Amazon-Advertising-API-Scope': pid,
+    'Content-Type': 'application/json',
+    'Accept': 'application/vnd.historyresponse.v1.1+json',
+  }
+
+  const all: any[] = []
+  let nextToken: string | null = null
+  let firstDiag: any = null
+  const RETRY_WAITS = [5000, 15000, 30000]   // 429 backoff
+  pages:
+  for (let page = 0; page < 200; page++) {
+    const body: any = { eventTypes, fromDate: fromMs, toDate: toMs, count: 200, sort: { direction: 'ASC', key: 'DATE' } }
+    if (nextToken) body.nextToken = nextToken
+
+    let res: Response | null = null
+    let lastErrText = ''
+    for (let attempt = 0; attempt <= RETRY_WAITS.length; attempt++) {
+      res = await fetch(`${AMAZON_ADS_BASE}/history`, { method: 'POST', headers: h, body: JSON.stringify(body) })
+      if (res.status !== 429) break
+      lastErrText = await res.text().catch(() => '')
+      const wait = RETRY_WAITS[attempt]
+      if (wait == null) break   // out of retries
+      console.log(`[sync] history page ${page} throttled (attempt ${attempt + 1}), retry in ${wait / 1000}s`)
+      await new Promise(r => setTimeout(r, wait))
+    }
+    if (!res || !res.ok) {
+      const t = res ? (res.status === 429 ? lastErrText : await res.text().catch(() => '')) : ''
+      console.log(`[sync] history page ${page}: HTTP ${res?.status} ${t.slice(0, 300)}`)
+      if (page === 0) firstDiag = { status: res?.status ?? 0, error: t.slice(0, 800) }
+      break pages
+    }
+    const data = await res.json()
+    const events: any[] = data.events ?? []
+    if (page === 0) firstDiag = { status: 200, count: events.length, totalResults: data.totalResults ?? null, sampleEvent: events[0] ?? null }
+    all.push(...events)
+    nextToken = data.nextToken ?? null
+    if (!nextToken || !events.length) break
+  }
+
+  // Persist first-call diagnostics to a probe row (sync-poll ignores non-pending statuses)
+  // so the exact response shape (entityId format + metadata fields) is verifiable after deploy.
+  try {
+    await db.from('sync_logs').insert({
+      profile_id: numericPid, triggered_by: 'history_probe', status: 'success',
+      started_at: new Date().toISOString(),
+      report_ids: { fromMs, toMs, fetched: all.length, firstDiag },
+    })
+  } catch (e) { console.log(`[sync] history probe-log: ${e}`) }
+
+  const rows = all.map(ev => mapHistoryEvent(ev, numericPid)).filter(Boolean)
+  if (rows.length) {
+    // Chunk upserts to stay well within payload limits.
+    for (let i = 0; i < rows.length; i += 500) {
+      const chunk = rows.slice(i, i + 500)
+      const { error } = await db.from('change_events')
+        .upsert(chunk, { onConflict: 'profile_id,entity_type,entity_id,field,event_ts', ignoreDuplicates: true })
+      if (error) console.log(`[sync] change_events upsert: ${error.message}`)
+    }
+  }
+  console.log(`[sync] change-history: fetched ${all.length}, mapped ${rows.length} (from ${new Date(fromMs).toISOString()})`)
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    const { profile_id, triggered_by = 'manual' } = await req.json()
+    const { profile_id, triggered_by = 'manual', history_only = false } = await req.json()
     if (!profile_id) return new Response(JSON.stringify({ error: 'profile_id required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+    // history_only mode: run ONLY the change-history ingest (no reports, no in-progress guard).
+    // Used for isolated testing + on-demand backfill without competing for Amazon's rate bucket.
+    if (history_only) {
+      const { data: prof, error: e } = await db.from('amazon_profiles')
+        .select('profile_id, access_token_enc, refresh_token_enc, token_expires_at')
+        .eq('profile_id', profile_id).single()
+      if (e || !prof) throw new Error(`Profile not found: ${e?.message}`)
+      let tk = await decryptToken(prof.access_token_enc)
+      if (new Date(prof.token_expires_at) <= new Date()) {
+        const r = await refreshAccessToken(await decryptToken(prof.refresh_token_enc))
+        tk = r.accessToken
+        await db.from('amazon_profiles').update({ access_token_enc: await encryptToken(tk), token_expires_at: r.expiresAt.toISOString() }).eq('profile_id', profile_id)
+      }
+      // Lightweight capture: campaign/ad-group snapshots + change-history API + snapshot-diff.
+      // No report creation (so no heavy rate usage) — used for testing + on-demand change refresh.
+      await Promise.allSettled([
+        syncCampaignStates(tk, String(prof.profile_id), db, prof.profile_id).catch(e => console.log(`[sync] states (history_only): ${e}`)),
+        syncChangeHistory(tk, String(prof.profile_id), db, prof.profile_id).catch(e => console.log(`[sync] history (history_only): ${e}`)),
+      ])
+      try { await db.rpc('diff_snapshots_to_change_events', { p_profile: prof.profile_id }) } catch (e) { console.log(`[sync] diff (history_only): ${e}`) }
+      return new Response(JSON.stringify({ success: true, mode: 'history_only' }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
+    }
 
     // Guard: reject if a fresh sync is already in progress (prevents 429 storms + 504 timeouts).
     // 'creating' = sync-profile is still submitting reports; stale after 3 min (edge fn timeout).
@@ -366,10 +563,11 @@ Deno.serve(async (req) => {
 
     const pid = String(profile.profile_id)
 
-    // Snapshot current campaign states + negative keywords — non-fatal if either fails.
+    // Snapshot current campaign states + negative keywords + ingest change history — non-fatal if any fails.
     await Promise.allSettled([
       syncCampaignStates(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] campaign-states skipped: ${e}`)),
       syncNegativeKeywords(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] negative-keywords skipped: ${e}`)),
+      syncChangeHistory(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] change-history skipped: ${e}`)),
     ])
 
     // Column definitions
@@ -378,6 +576,10 @@ Deno.serve(async (req) => {
     const SP_KW   = ['date','campaignId','adGroupId','keywordId','keyword','matchType','adKeywordStatus','keywordBid','targeting','topOfSearchImpressionShare','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SP_ST: include both 'searchTerm' (customer query) and 'targeting' (keyword/ASIN expression that matched)
     const SP_ST   = ['date','campaignId','adGroupId','keywordId','matchType','targeting','searchTerm','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+    // SP ad-group perf (groupBy adGroup): campaignId NOT allowed at this grain — resolved via sp_ad_groups
+    const SP_AG    = ['date','adGroupId','adGroupName','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
+    // SP placement perf (groupBy campaignPlacement): placementClassification = Top of Search / Detail Page / Other
+    const SP_PLACE = ['date','campaignId','placementClassification','impressions','clicks','cost','purchases14d','sales14d','unitsSoldClicks14d']
     // SB spend/clicks report — sales columns not supported at campaign level
     // sales/purchases/unitsSold = click-attributed (v3). Verifying these are valid + populated for sbCampaigns.
     const SB_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost','sales','purchases','unitsSold']
@@ -412,10 +614,12 @@ Deno.serve(async (req) => {
       console.log(`[sync] Creating SP reports for ${startDate} → ${endDate}...`)
       // maxRetries=0 for SP — fail fast. SP is almost never throttled; a null ID just
       // means 0 records for that report this batch, which is recoverable on next sync.
-      const [spCamp, spKw, spSt] = await Promise.all([
+      const [spCamp, spKw, spSt, spAg, spPlace] = await Promise.all([
         createReport(token, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMP, startDate, endDate, undefined, 0),
         createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate, undefined, 0),
         createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate, undefined, 0),
+        createReport(token, pid, 'SP Ad Groups', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['adGroup'],          SP_AG,    startDate, endDate, undefined, 0),
+        createReport(token, pid, 'SP Placements','SPONSORED_PRODUCTS', 'spCampaigns',  ['campaignPlacement'], SP_PLACE, startDate, endDate, undefined, 0),
       ])
 
       // Insert log entry immediately after SP — visible in sync history within seconds.
@@ -427,7 +631,7 @@ Deno.serve(async (req) => {
         started_at: new Date().toISOString(),
         date_range_start: startDate,
         date_range_end: endDate,
-        report_ids: { spCamp, spKw, spSt, startDate, endDate },
+        report_ids: { spCamp, spKw, spSt, spAg, spPlace, startDate, endDate },
       }).select('id').single()
       if (log?.id) logIds.push(log.id)
 
@@ -472,7 +676,7 @@ Deno.serve(async (req) => {
       if (log?.id) {
         await db.from('sync_logs').update({
           status: 'reports_pending',
-          report_ids: { spCamp, spKw, spSt, sbCamp, sbKw, sbSt, sbAttr, sdCamp, startDate, endDate },
+          report_ids: { spCamp, spKw, spSt, spAg, spPlace, sbCamp, sbKw, sbSt, sbAttr, sdCamp, startDate, endDate },
         }).eq('id', log.id)
       }
     }

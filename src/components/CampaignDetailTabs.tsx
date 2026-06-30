@@ -12,7 +12,7 @@ export type AdGroupRow = { ad_group_id: string; name: string; state: string; def
 export type PlacementRow = { key: string; label: string; current: number; events: Pt[] } & Perf
 export type StrategyInfo = { current: string | null; changes: { ts: string; from: string | null; to: string | null }[] }
 export type TargetRow = { keyword_id: number; text: string; match_type: string; state: string; bid_cents: number; prev_bid_cents: number | null } & Perf
-export type STRow = { term: string; keyword_id: number | null; ad_type: string; bid_cents: number | null; targeting: string | null } & Perf
+export type STRow = { term: string; keyword_id: number | null; ad_type: string; bid_cents: number | null; prev_bid_cents?: number | null; targeting: string | null } & Perf
 
 const fmtD = (c: number) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const acosOf = (p: Perf) => p.sales_cents > 0 ? (p.spend_cents / p.sales_cents * 100).toFixed(1) + '%' : '—'
@@ -204,7 +204,7 @@ export default function CampaignDetailTabs({
                           <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[260px] truncate" title={s.term}>{s.term}</td>
                           <td className="px-3 py-2.5 text-xs text-gray-500 max-w-[160px] truncate">{s.targeting || '—'}</td>
                           <td className="px-3 py-2.5 tabular-nums">
-                            {s.bid_cents != null && s.keyword_id ? <button onClick={() => handleExpandBid(rk, s.keyword_id!, s.ad_type)} className={`hover:underline ${expanded === rk ? 'text-orange-600 font-semibold' : 'text-gray-700 hover:text-orange-600'}`}>${(s.bid_cents / 100).toFixed(2)}</button> : <span className="text-gray-300">—</span>}
+                            {s.bid_cents != null && s.keyword_id ? <button onClick={() => handleExpandBid(rk, s.keyword_id!, s.ad_type)} className="hover:underline hover:text-orange-600"><BidLastCurrent prev={s.prev_bid_cents ?? null} cur={s.bid_cents} /></button> : <span className="text-gray-300">—</span>}
                           </td>
                           <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{s.spend_cents ? fmtD(s.spend_cents) : '—'}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{s.sales_cents ? fmtD(s.sales_cents) : '—'}</td>

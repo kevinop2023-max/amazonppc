@@ -29,9 +29,9 @@ export default function DashboardNav({ user, profiles, isAdmin = false }: { user
   const p = profileId ? `?profile_id=${profileId}` : ''
   const links = [
     { href: `/dashboard${p}`,              label: 'Overview',     icon: '▤' },
+    { href: `/dashboard/comparison${p}`,   label: 'Comparison',   icon: '⇄' },
     { href: `/dashboard/campaigns${p}`,    label: 'Campaigns',    icon: '◈' },
     { href: `/dashboard/search-terms${p}`,  label: 'Search Terms', icon: '⌕' },
-    { href: `/dashboard/comparison${p}`,   label: 'Comparison',   icon: '⇄' },
     { href: `/dashboard/targeting${p}`,    label: 'Targeting',    icon: '◇' },
     { href: `/dashboard/changes${p}`,      label: 'Changes',      icon: '↯' },
     { href: `/dashboard/alerts${p}`,       label: 'Alerts',       icon: '◉' },

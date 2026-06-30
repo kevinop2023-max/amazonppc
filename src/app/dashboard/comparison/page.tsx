@@ -55,10 +55,10 @@ export default async function ComparisonPage({
       .select('campaign_id, campaign_name, state, daily_budget_cents, spend_cents, sales_cents, orders, impressions, clicks, date')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sp_search_terms')
-      .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks, impressions')
+      .select('campaign_id, keyword_id, customer_search_term, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', aStart).lte('date', aEnd).range(0, 49999),
     supabase.from('sp_search_terms')
-      .select('campaign_id, customer_search_term, spend_cents, sales_cents, orders, clicks, impressions')
+      .select('campaign_id, keyword_id, customer_search_term, spend_cents, sales_cents, orders, clicks, impressions')
       .eq('profile_id', profileId).gte('date', bStart).lte('date', bEnd).range(0, 49999),
     supabase.from('sp_keywords')
       .select('keyword_id, campaign_id, keyword_text, match_type, bid_cents, spend_cents, sales_cents, orders, clicks, impressions')
@@ -166,18 +166,19 @@ export default async function ComparisonPage({
 
   // Aggregate search terms by (campaignId, term)
   function aggTermMap(rows: any[]) {
-    const map = new Map<string, { campaignId: number; spend: number; sales: number; orders: number; clicks: number; imp: number }>()
+    const map = new Map<string, { campaignId: number; keywordId: number | null; kwSpend: number; spend: number; sales: number; orders: number; clicks: number; imp: number }>()
     for (const r of rows) {
       const term = r.customer_search_term ?? ''
       const cid  = n(r.campaign_id)
       const key  = `${cid}|${term}`
-      if (!map.has(key)) map.set(key, { campaignId: cid, spend: 0, sales: 0, orders: 0, clicks: 0, imp: 0 })
+      if (!map.has(key)) map.set(key, { campaignId: cid, keywordId: null, kwSpend: -1, spend: 0, sales: 0, orders: 0, clicks: 0, imp: 0 })
       const t = map.get(key)!
       t.spend  += n(r.spend_cents)
       t.sales  += n(r.sales_cents)
       t.orders += n(r.orders)
       t.clicks += n(r.clicks)
       t.imp    += n(r.impressions)
+      if (r.keyword_id && n(r.spend_cents) > t.kwSpend) { t.keywordId = n(r.keyword_id); t.kwSpend = n(r.spend_cents) }
     }
     return map
   }
@@ -197,6 +198,8 @@ export default async function ComparisonPage({
       term,
       campaignId:   cid,
       campaignName: campNameMap.get(cid) ?? '',
+      keywordId:    b?.keywordId ?? a?.keywordId ?? null,
+      bidHistory:   [],
       aSpend:  a?.spend  ?? 0, aSales:  a?.sales  ?? 0, aOrders: a?.orders ?? 0, aClicks: a?.clicks ?? 0, aImp: a?.imp ?? 0,
       bSpend:  b?.spend  ?? 0, bSales:  b?.sales  ?? 0, bOrders: b?.orders ?? 0, bClicks: b?.clicks ?? 0, bImp: b?.imp ?? 0,
     })
@@ -216,6 +219,8 @@ export default async function ComparisonPage({
   for (const [key, records] of bidHistMap) {
     bidHistMap.set(key, records.filter((r, i) => i === 0 || r.bidCents !== records[i - 1].bidCents))
   }
+  // Attach the triggering target's bid history to each search term (SP)
+  for (const t of terms) t.bidHistory = t.keywordId ? (bidHistMap.get(`${t.keywordId}|sp`) ?? []) : []
 
   function aggKwMap(rows: any[]) {
     const map = new Map<string, { keywordId: number; adType: string; campaignId: number; spend: number; sales: number; orders: number; clicks: number; imp: number; text: string; mt: string }>()

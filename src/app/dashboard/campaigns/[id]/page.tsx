@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import { Suspense } from 'react'
+import DateRangePicker from '@/components/DateRangePicker'
 import CampaignPerformanceChart, { type DailyPoint, type ChangeMarker } from '@/components/CampaignPerformanceChart'
 import CampaignDetailTabs, { type AdGroupRow, type PlacementRow } from '@/components/CampaignDetailTabs'
 import { type ChangeEvent } from '@/components/ChangesView'
@@ -191,6 +193,7 @@ export default async function CampaignDetailPage({
     searchTerms = [...stMap.values()].map(a => ({
       term: a.term, keyword_id: a.keyword_id, ad_type: adType, targeting: a.targeting,
       bid_cents: a.keyword_id ? (curBidMap.get(`${atLower}|${a.keyword_id}`) ?? null) : null,
+      prev_bid_cents: a.keyword_id ? (prevBidMap.get(`${atLower}|${a.keyword_id}`) ?? null) : null,
       spend_cents: a.spend_cents, sales_cents: a.sales_cents, orders: a.orders, clicks: a.clicks,
     })).sort((x, y) => y.spend_cents - x.spend_cents)
   }
@@ -209,11 +212,16 @@ export default async function CampaignDetailPage({
             <h1 className="text-xl font-bold text-gray-900 truncate">{name}</h1>
             {meta.state && meta.state.toLowerCase() !== 'enabled' && <span className="text-xs text-gray-400">({meta.state})</span>}
           </div>
-          <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
-            {['7', '14', '30', '60'].map(d => (
-              <Link key={d} href={dayLink(d)} className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${!isCustom && !isAllTime && days === Number(d) ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'}`}>{d}d</Link>
-            ))}
-            <Link href={dayLink('all')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${isAllTime ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'}`}>All</Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1">
+              {['7', '14', '30', '60'].map(d => (
+                <Link key={d} href={dayLink(d)} className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${!isCustom && !isAllTime && days === Number(d) ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'}`}>{d}d</Link>
+              ))}
+              <Link href={dayLink('all')} className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${isAllTime ? 'bg-orange-500 text-white' : 'text-gray-500 hover:text-gray-800'}`}>All</Link>
+            </div>
+            <Suspense fallback={null}>
+              <DateRangePicker start={startStr} end={endStr} basePath={`/dashboard/campaigns/${campaignId}`} />
+            </Suspense>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 mt-2">

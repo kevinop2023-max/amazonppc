@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import PerformanceChart from './PerformanceChart'
 import type { DayData } from './PerformanceChart'
 import CombinedPerformanceChart from './CombinedPerformanceChart'
@@ -16,13 +17,14 @@ export type CampComp = {
   bSpend: number; bSales: number; bOrders: number; bImp: number; bClicks: number
 }
 
+export type BidRecord = { date: string; bidCents: number }
+
 export type TermComp = {
   term: string; campaignId: number; campaignName: string
+  keywordId: number | null; bidHistory: BidRecord[]
   aSpend: number; aSales: number; aOrders: number; aClicks: number; aImp: number
   bSpend: number; bSales: number; bOrders: number; bClicks: number; bImp: number
 }
-
-export type BidRecord = { date: string; bidCents: number }
 
 export type KwComp = {
   keywordId: number; keywordText: string; matchType: string; adType: string
@@ -89,6 +91,50 @@ function acosPct(spend: number, sales: number): number | null {
 
 function pctChg(a: number, b: number): number | null {
   return a === 0 ? null : (b - a) / a * 100
+}
+
+// ── Bid history helpers (Targeting-style: last → current + click chart) ─────────
+function BidCellButton({ history, isOpen, onClick }: { history: BidRecord[]; isOpen: boolean; onClick: () => void }) {
+  if (!history.length) return <span className="text-[11px] text-gray-300">—</span>
+  const cur = history[history.length - 1].bidCents
+  const prev = history.length >= 2 ? history[history.length - 2].bidCents : null
+  return (
+    <button onClick={onClick} className={`text-[11px] tabular-nums hover:underline whitespace-nowrap ${isOpen ? 'text-orange-600 font-semibold' : 'text-gray-700 hover:text-orange-600'}`}>
+      {prev != null
+        ? <span><span className="text-gray-400">{fmtD(prev)}</span><span className="mx-1 text-gray-300">→</span><span className={cur > prev ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'}>{fmtD(cur)}</span></span>
+        : fmtD(cur)}
+    </button>
+  )
+}
+
+function BidHistoryPanel({ history, label, onClose }: { history: BidRecord[]; label: string; onClose: () => void }) {
+  const data = history.map(h => ({ date: h.date, bid: h.bidCents / 100 }))
+  return (
+    <div className="bg-orange-50/30 border border-orange-100 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs font-semibold text-gray-700 truncate">Bid history — {label}</p>
+        <button onClick={onClose} className="text-xs text-gray-400 hover:text-gray-700 shrink-0 ml-3">✕ close</button>
+      </div>
+      {data.length === 0 ? <p className="text-xs text-gray-400 py-4">No bid history recorded yet.</p> : (
+        <div className="h-28">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data}>
+              <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={d => d.slice(5)} />
+              <YAxis tick={{ fontSize: 9 }} tickFormatter={v => '$' + v.toFixed(2)} width={42} />
+              <Tooltip formatter={(v: number) => ['$' + v.toFixed(2), 'Bid']} labelFormatter={l => 'Date: ' + l} />
+              <Line type="monotone" dataKey="bid" stroke="#f97316" dot={false} strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Last up-to-3 bid changes as "$a → $b → $c"
+function bidLast3(history: BidRecord[]) {
+  if (!history.length) return '—'
+  return history.slice(-3).map(h => fmtD(h.bidCents)).join(' → ')
 }
 
 // ── Primitive components ──────────────────────────────────────────────────────
@@ -253,6 +299,7 @@ function CampExpanded({ camp, terms }: { camp: CampComp; terms: TermComp[] }) {
                     <th className="text-right px-3 py-2 text-[10px] font-semibold text-blue-400 uppercase">A ACoS</th>
                     <th className="text-right px-3 py-2 text-[10px] font-semibold text-purple-400 uppercase">B Orders</th>
                     <th className="text-right px-3 py-2 text-[10px] font-semibold text-purple-400 uppercase">B ACoS</th>
+                    <th className="text-right px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Bid (last 3)</th>
                     <th className="text-center px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase">Status</th>
                     <th className="text-right px-4 py-2 text-[10px] font-semibold text-gray-400 uppercase">Recommendation</th>
                   </tr>
@@ -271,6 +318,7 @@ function CampExpanded({ camp, terms }: { camp: CampComp; terms: TermComp[] }) {
                         <td className="px-3 py-2 text-right text-[11px] text-blue-600 tabular-nums">{tAa !== null ? tAa.toFixed(1) + '%' : '—'}</td>
                         <td className="px-3 py-2 text-right text-[11px] text-purple-600 font-semibold tabular-nums">{t.bOrders}</td>
                         <td className="px-3 py-2 text-right text-[11px] text-purple-600 tabular-nums">{tBa !== null ? tBa.toFixed(1) + '%' : '—'}</td>
+                        <td className="px-3 py-2 text-right text-[11px] text-gray-600 tabular-nums whitespace-nowrap">{bidLast3(t.bidHistory)}</td>
                         <td className="px-3 py-2 text-center">
                           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusCls}`}>{status}</span>
                         </td>
@@ -477,22 +525,23 @@ function CampaignsTab({ camps, terms, aStart, aEnd, bStart, bEnd, profileId }: {
 
 function SearchTermsTab({ terms }: { terms: TermComp[] }) {
   const [subTab, setSubTab] = useState<'all' | 'harvest' | 'wasted'>('harvest')
+  const [openBid, setOpenBid] = useState<string | null>(null)
 
   // Aggregate terms cross-campaign; track campaign with highest B spend per term
   const global = useMemo(() => {
     const map = new Map<string, {
       aSpend: number; aSales: number; aOrders: number; aClicks: number; aImp: number
       bSpend: number; bSales: number; bOrders: number; bClicks: number; bImp: number
-      bestCampName: string; bestCampBSpend: number
+      bestCampName: string; bestCampBSpend: number; bestBidHistory: BidRecord[]
     }>()
     for (const t of terms) {
       if (!map.has(t.term)) {
-        map.set(t.term, { aSpend: 0, aSales: 0, aOrders: 0, aClicks: 0, aImp: 0, bSpend: 0, bSales: 0, bOrders: 0, bClicks: 0, bImp: 0, bestCampName: t.campaignName, bestCampBSpend: 0 })
+        map.set(t.term, { aSpend: 0, aSales: 0, aOrders: 0, aClicks: 0, aImp: 0, bSpend: 0, bSales: 0, bOrders: 0, bClicks: 0, bImp: 0, bestCampName: t.campaignName, bestCampBSpend: 0, bestBidHistory: t.bidHistory ?? [] })
       }
       const m = map.get(t.term)!
       m.aSpend += t.aSpend; m.aSales += t.aSales; m.aOrders += t.aOrders; m.aClicks += t.aClicks; m.aImp += t.aImp
       m.bSpend += t.bSpend; m.bSales += t.bSales; m.bOrders += t.bOrders; m.bClicks += t.bClicks; m.bImp += t.bImp
-      if (t.bSpend > m.bestCampBSpend) { m.bestCampName = t.campaignName; m.bestCampBSpend = t.bSpend }
+      if (t.bSpend > m.bestCampBSpend) { m.bestCampName = t.campaignName; m.bestCampBSpend = t.bSpend; m.bestBidHistory = t.bidHistory ?? [] }
     }
     return Array.from(map.entries()).map(([term, m]) => ({ term, ...m }))
   }, [terms])
@@ -560,6 +609,8 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
         )
       })()}
 
+      {openBid != null && (() => { const g = global.find(x => x.term === openBid); return g ? <div className="mb-3"><BidHistoryPanel history={g.bestBidHistory} label={g.term} onClose={() => setOpenBid(null)} /></div> : null })()}
+
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -567,6 +618,7 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
               <tr className="bg-gray-50/60 border-b border-gray-100">
                 <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Campaign</th>
                 <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Search Term</th>
+                <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Bid</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Sales</th>
@@ -587,7 +639,7 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={18} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
+                <tr><td colSpan={19} className="py-12 text-center text-sm text-gray-400">{emptyMsg}</td></tr>
               ) : rows.map((t, i) => {
                 const tAa = acosPct(t.aSpend, t.aSales)
                 const tBa = acosPct(t.bSpend, t.bSales)
@@ -620,6 +672,7 @@ function SearchTermsTab({ terms }: { terms: TermComp[] }) {
                       {isFirstInGroup ? (t.bestCampName || '—') : ''}
                     </td>
                     <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[180px] truncate">{t.term}</td>
+                    <td className="px-3 py-2.5"><BidCellButton history={t.bestBidHistory} isOpen={openBid === t.term} onClick={() => setOpenBid(openBid === t.term ? null : t.term)} /></td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aOrders || '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{tAa !== null ? tAa.toFixed(1) + '%' : '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{t.aSales > 0 ? fmtD(t.aSales) : '—'}</td>
@@ -665,6 +718,7 @@ const MATCH_ORDER: Record<string, number> = { exact: 0, phrase: 1, broad: 2 }
 
 function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
   const [subTab, setSubTab] = useState<'all' | 'harvest' | 'wasted'>('harvest')
+  const [openBid, setOpenBid] = useState<number | null>(null)
 
   function byCampThenMetric(arr: KwComp[], metric: (k: KwComp) => number) {
     return [...arr].sort((a, b) => {
@@ -736,6 +790,8 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
         )
       })()}
 
+      {openBid != null && (() => { const k = keywords.find(x => x.keywordId === openBid); return k ? <div className="mb-3"><BidHistoryPanel history={k.bidHistory} label={k.keywordText} onClose={() => setOpenBid(null)} /></div> : null })()}
+
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -744,7 +800,7 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
                 <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Campaign</th>
                 <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Keyword</th>
                 <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Match</th>
-                <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Bid History</th>
+                <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Bid</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Orders</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A ACoS</th>
                 <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">A Sales</th>
@@ -798,20 +854,8 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
                         {k.matchType}
                       </span>
                     </td>
-                    <td className="px-3 py-2.5 max-w-[200px]">
-                      {k.bidHistory.length === 0 ? (
-                        <span className="text-[11px] text-gray-300">no data yet</span>
-                      ) : (
-                        <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
-                          {k.bidHistory.map((b, bi) => (
-                            <span key={bi} className="flex items-center gap-1">
-                              {bi > 0 && <span className="text-gray-300 text-[10px]">→</span>}
-                              <span className="text-[11px] font-semibold text-gray-800">{fmtD(b.bidCents)}</span>
-                              <span className="text-[10px] text-gray-400">{fmtDate(b.date)}</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                    <td className="px-3 py-2.5">
+                      <BidCellButton history={k.bidHistory} isOpen={openBid === k.keywordId} onClick={() => setOpenBid(openBid === k.keywordId ? null : k.keywordId)} />
                     </td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{k.aOrders || '—'}</td>
                     <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{kAa !== null ? kAa.toFixed(1) + '%' : '—'}</td>
@@ -855,6 +899,7 @@ function KeywordsTab({ keywords }: { keywords: KwComp[] }) {
 
 function OverlapTab({ keywords, terms }: { keywords: KwComp[]; terms: TermComp[] }) {
   const [matchFilter, setMatchFilter] = useState<'' | 'exact' | 'phrase' | 'broad'>('')
+  const [openBid, setOpenBid] = useState<number | null>(null)
 
   // Build lookup: term text (lowercase) → aggregated TermComp metrics
   const termLookup = useMemo(() => {
@@ -913,6 +958,8 @@ function OverlapTab({ keywords, terms }: { keywords: KwComp[]; terms: TermComp[]
         ))}
       </div>
 
+      {openBid != null && (() => { const k = rows.find(x => x.keywordId === openBid); return k ? <BidHistoryPanel history={k.bidHistory} label={k.keywordText} onClose={() => setOpenBid(null)} /> : null })()}
+
       {rows.length === 0 ? (
         <div className="py-16 text-center text-sm text-gray-400">No overlapping keywords and search terms found.</div>
       ) : (
@@ -924,7 +971,7 @@ function OverlapTab({ keywords, terms }: { keywords: KwComp[]; terms: TermComp[]
                   <th className="text-left px-4 py-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Campaign</th>
                   <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Keyword / Search Term</th>
                   <th className="text-center px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Match</th>
-                  <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Bid History</th>
+                  <th className="text-left px-3 py-3 text-[10px] font-semibold text-gray-400 uppercase whitespace-nowrap">Bid</th>
                   {/* Keyword metrics */}
                   <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">KW A Spend</th>
                   <th className="text-right px-3 py-3 text-[10px] font-semibold text-blue-400 uppercase whitespace-nowrap">KW A ACoS</th>
@@ -974,20 +1021,8 @@ function OverlapTab({ keywords, terms }: { keywords: KwComp[]; terms: TermComp[]
                           {kw.matchType}
                         </span>
                       </td>
-                      <td className="px-3 py-2.5 max-w-[180px]">
-                        {kw.bidHistory.length === 0 ? (
-                          <span className="text-[11px] text-gray-300">no data yet</span>
-                        ) : (
-                          <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
-                            {kw.bidHistory.map((b, bi) => (
-                              <span key={bi} className="flex items-center gap-1">
-                                {bi > 0 && <span className="text-gray-300 text-[10px]">→</span>}
-                                <span className="text-[11px] font-semibold text-gray-800">{fmtD(b.bidCents)}</span>
-                                <span className="text-[10px] text-gray-400">{fmtDate(b.date)}</span>
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                      <td className="px-3 py-2.5">
+                        <BidCellButton history={kw.bidHistory} isOpen={openBid === kw.keywordId} onClick={() => setOpenBid(openBid === kw.keywordId ? null : kw.keywordId)} />
                       </td>
                       {/* KW metrics */}
                       <td className="px-3 py-2.5 text-right text-blue-600 tabular-nums">{kw.aSpend > 0 ? fmtD(kw.aSpend) : '—'}</td>
@@ -1040,10 +1075,10 @@ function chgMarkerLabel(e: CompChange): string {
   return `${who} · ${lbl} ${e.old_text ?? '—'}→${e.new_text ?? '—'}`
 }
 
-function ChangeImpactPanel({ changeEvents, chartDataB, totals, labelB }: {
-  changeEvents: CompChange[]; chartDataB: DayData[]
+function ChangeImpactPanel({ changeEvents, chartDataA, chartDataB, totals, labelA, labelB }: {
+  changeEvents: CompChange[]; chartDataA: DayData[]; chartDataB: DayData[]
   totals: { aSpend: number; bSpend: number; aSales: number; bSales: number; aOrders: number; bOrders: number; aAcos: number | null; bAcos: number | null }
-  labelB: string
+  labelA: string; labelB: string
 }) {
   const [showAll, setShowAll] = useState(false)
 
@@ -1093,11 +1128,17 @@ function ChangeImpactPanel({ changeEvents, chartDataB, totals, labelB }: {
           : chips.map(c => <span key={c.label} className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${c.cls}`}>{c.n} {c.label}</span>)}
       </div>
 
-      {/* B performance with change markers */}
-      <CampaignPerformanceChart
-        daily={chartDataB.map(d => ({ date: d.date, spendCents: d.spendCents, salesCents: d.salesCents, clicks: d.clicks, orders: d.orders }))}
-        markers={markers}
-      />
+      {/* A vs B period charts — B carries the change markers */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <PerformanceChart data={chartDataA} title={`Period A: ${labelA}`} />
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <p className="text-xs font-semibold text-gray-500 mb-2">Period B: {labelB} <span className="font-normal text-gray-400">· with changes</span></p>
+          <CampaignPerformanceChart
+            daily={chartDataB.map(d => ({ date: d.date, spendCents: d.spendCents, salesCents: d.salesCents, clicks: d.clicks, orders: d.orders }))}
+            markers={markers}
+          />
+        </div>
+      </div>
 
       {showAll && bEvents.length > 0 && (
         <div className="pt-2 border-t border-gray-100">
@@ -1276,14 +1317,8 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
       {/* Combined chart — A (dashed) and B (solid) overlaid */}
       <CombinedPerformanceChart dataA={chartDataA} dataB={chartDataB} labelA={labelA} labelB={labelB} />
 
-      {/* Separate period charts — A and B side by side */}
-      <div className="grid grid-cols-2 gap-4">
-        <PerformanceChart data={chartDataA} title={`Period A: ${labelA}`} />
-        <PerformanceChart data={chartDataB} title={`Period B: ${labelB}`} />
-      </div>
-
-      {/* Change Impact — what changed in B, overlaid on performance (Comparison v2) */}
-      <ChangeImpactPanel changeEvents={changeEvents} chartDataB={chartDataB} totals={totals} labelB={labelB} />
+      {/* Change Impact — A/B period charts (B w/ change markers) + what-changed insight + explorer */}
+      <ChangeImpactPanel changeEvents={changeEvents} chartDataA={chartDataA} chartDataB={chartDataB} totals={totals} labelA={labelA} labelB={labelB} />
 
       {/* Tabs */}
       <div className="border-b border-gray-100">

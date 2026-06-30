@@ -475,10 +475,10 @@ function CampaignsTab({ camps, terms, aStart, aEnd, bStart, bEnd, profileId }: {
                       <td className="px-3 py-2.5">
                         <button
                           onClick={() => toggleExpand(key)}
-                          className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-700 transition-colors rounded hover:bg-gray-100"
+                          className="w-7 h-7 flex items-center justify-center text-gray-700 hover:text-orange-600 transition-colors rounded-lg hover:bg-gray-100"
                           title={isExp ? 'Collapse' : 'Expand'}
                         >
-                          <span className="text-xs">{isExp ? '∧' : '›'}</span>
+                          <span className="text-lg font-bold leading-none">{isExp ? '⌄' : '›'}</span>
                         </button>
                       </td>
                       <td className="px-3 py-2.5 max-w-[200px]">

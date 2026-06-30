@@ -1,5 +1,7 @@
 'use client'
-import { useState, useMemo } from 'react'
+import React, { useState, useMemo, useTransition } from 'react'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { getBidHistory } from '@/app/dashboard/targeting/actions'
 
 const adTypeCls: Record<string, string> = {
   SP: 'bg-blue-50 text-blue-600',
@@ -28,6 +30,7 @@ interface Term {
   term: string; adType: string; matchType: string | null; targetingKeyword: string | null
   campaignId: number; campaignName: string; spend: number; sales: number
   orders: number; clicks: number; acos: number | null; cvr: number | null
+  keywordId?: number | null; bidCents?: number | null
 }
 
 interface Props {
@@ -41,6 +44,19 @@ interface Props {
 export default function SearchTermsTable({ sortedGroups, campaigns, mode, colCount, minSpend }: Props) {
   const [campaignSearch, setCampaignSearch] = useState('')
   const [campaignFilter, setCampaignFilter] = useState('all')
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [bidHistory, setBidHistory] = useState<{ date: string; bid: number }[]>([])
+  const [loadingBid, setLoadingBid] = useState(false)
+  const [, startTransition] = useTransition()
+
+  const handleExpandBid = (rowKey: string, keywordId: number, adType: string) => {
+    if (expanded === rowKey) { setExpanded(null); return }
+    setExpanded(rowKey); setLoadingBid(true)
+    startTransition(async () => {
+      const hist = await getBidHistory(keywordId, adType.toLowerCase() === 'sb' ? 'sb' : 'sp')
+      setBidHistory(hist); setLoadingBid(false)
+    })
+  }
 
   const filteredGroups = useMemo(() =>
     sortedGroups.filter(([name]) => {
@@ -87,6 +103,7 @@ export default function SearchTermsTable({ sortedGroups, campaigns, mode, colCou
                 <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Search Term</th>
                 <th className="text-left px-3 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Triggered By</th>
                 <th className="text-center px-3 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Type</th>
+                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Bid</th>
                 <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Spend</th>
                 <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sales</th>
                 <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">ACOS</th>
@@ -122,6 +139,7 @@ export default function SearchTermsTable({ sortedGroups, campaigns, mode, colCou
                             <span className="text-[10px] text-gray-500 shrink-0 bg-gray-200 rounded px-1.5 py-0.5">{groupTerms.length}</span>
                           </div>
                         </td>
+                        <td className="px-4 py-2"></td>
                         <td className="px-4 py-2 text-right text-xs tabular-nums">${gSpend.toFixed(2)}</td>
                         <td className="px-4 py-2 text-right text-xs tabular-nums">${gSales.toFixed(2)}</td>
                         <td className="px-4 py-2 text-right text-xs tabular-nums">{gAcos !== null ? gAcos + '%' : '—'}</td>
@@ -132,8 +150,9 @@ export default function SearchTermsTable({ sortedGroups, campaigns, mode, colCou
                       </tr>
                     )
                   })()}
-                  {groupTerms.map((t, i) => (
-                    <tr key={`${t.campaignId}-${i}`} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
+                  {groupTerms.map((t, i) => { const rowKey = `${t.campaignId}-${i}`; const isExp = expanded === rowKey; return (
+                    <React.Fragment key={rowKey}>
+                    <tr className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
                       <td className="py-3 font-medium text-gray-900 max-w-xs">
                         <span className="block truncate pl-8 pr-4" title={t.term}>{t.term}</span>
                       </td>
@@ -150,6 +169,11 @@ export default function SearchTermsTable({ sortedGroups, campaigns, mode, colCou
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${adTypeCls[t.adType] ?? ''}`}>{t.adType}</span>
                           {termTypeBadge(t.matchType)}
                         </div>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">
+                        {t.bidCents != null && t.keywordId
+                          ? <button onClick={() => handleExpandBid(rowKey, t.keywordId!, t.adType)} className={`hover:underline ${isExp ? 'text-orange-600 font-semibold' : 'text-gray-700 hover:text-orange-600'}`}>${(t.bidCents / 100).toFixed(2)}</button>
+                          : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-gray-900 tabular-nums">${t.spend.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right text-gray-600 tabular-nums">${t.sales.toFixed(2)}</td>
@@ -181,7 +205,36 @@ export default function SearchTermsTable({ sortedGroups, campaigns, mode, colCou
                         </td>
                       )}
                     </tr>
-                  ))}
+                    {isExp && (
+                      <tr className="bg-orange-50/20 border-b border-orange-100">
+                        <td colSpan={colCount} className="px-10 py-4">
+                          {loadingBid ? <p className="text-xs text-gray-400">Loading bid history…</p>
+                            : bidHistory.length === 0 ? <p className="text-xs text-gray-400">No bid history recorded yet for the triggering target.</p>
+                            : (
+                              <div className="space-y-2">
+                                <p className="text-xs font-semibold text-gray-600">Triggering target — Bid History</p>
+                                <div className="h-28">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={bidHistory}>
+                                      <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={d => d.slice(5)} />
+                                      <YAxis tick={{ fontSize: 10 }} tickFormatter={v => '$' + v.toFixed(2)} width={45} />
+                                      <Tooltip formatter={(v: number) => ['$' + v.toFixed(2), 'Bid']} labelFormatter={l => 'Date: ' + l} />
+                                      <Line type="monotone" dataKey="bid" stroke="#f97316" dot={false} strokeWidth={2} />
+                                    </LineChart>
+                                  </ResponsiveContainer>
+                                </div>
+                                <div className="flex gap-6 text-xs text-gray-500">
+                                  <span>Current: <strong className="text-gray-800">${bidHistory[bidHistory.length - 1]?.bid.toFixed(2)}</strong></span>
+                                  <span>Lowest: <strong className="text-gray-800">${Math.min(...bidHistory.map(h => h.bid)).toFixed(2)}</strong></span>
+                                  <span>Highest: <strong className="text-gray-800">${Math.max(...bidHistory.map(h => h.bid)).toFixed(2)}</strong></span>
+                                </div>
+                              </div>
+                            )}
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
+                  )})}
                 </>
               ))}
             </tbody>

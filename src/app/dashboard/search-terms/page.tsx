@@ -29,27 +29,29 @@ export default async function SearchTermsPage({
   // Round 1: search term rows (include campaign_id for grouping)
   const [spRes, sbRes] = await Promise.all([
     adType !== 'SB'
-      ? supabase.from('sp_search_terms').select('campaign_id, customer_search_term, match_type, targeting_keyword, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
+      ? supabase.from('sp_search_terms').select('campaign_id, keyword_id, customer_search_term, match_type, targeting_keyword, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
       : Promise.resolve({ data: [] as any[] }),
     adType !== 'SP'
-      ? supabase.from('sb_search_terms').select('campaign_id, customer_search_term, match_type, targeting_keyword, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
+      ? supabase.from('sb_search_terms').select('campaign_id, keyword_id, customer_search_term, match_type, targeting_keyword, impressions, clicks, spend_cents, sales_cents, orders').eq('profile_id', profileId).gte('date', startStr).lte('date', endStr).range(0, 49999)
       : Promise.resolve({ data: [] as any[] }),
   ])
 
   // Aggregate by (adType, campaignId, term) — same term in different campaigns = separate rows
-  type TermAgg = { adType: string; campaignId: number; term: string; matchType: string | null; targetingKeyword: string | null; spend: number; sales: number; orders: number; clicks: number; impressions: number }
+  type TermAgg = { adType: string; campaignId: number; term: string; matchType: string | null; targetingKeyword: string | null; keywordId: number | null; kwSpend: number; spend: number; sales: number; orders: number; clicks: number; impressions: number }
   const map = new Map<string, TermAgg>()
 
   function addRows(rows: any[] | null, adType: string) {
     for (const r of rows ?? []) {
       const key = `${adType}|${r.campaign_id}|${r.customer_search_term}`
-      if (!map.has(key)) map.set(key, { adType, campaignId: Number(r.campaign_id), term: r.customer_search_term ?? '', matchType: r.match_type ?? null, targetingKeyword: r.targeting_keyword ?? null, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 })
+      if (!map.has(key)) map.set(key, { adType, campaignId: Number(r.campaign_id), term: r.customer_search_term ?? '', matchType: r.match_type ?? null, targetingKeyword: r.targeting_keyword ?? null, keywordId: null, kwSpend: -1, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0 })
       const a = map.get(key)!
       a.spend       += r.spend_cents
       a.sales       += r.sales_cents
       a.orders      += r.orders
       a.clicks      += r.clicks
       a.impressions += r.impressions
+      // Triggering target = the keyword_id with the most spend for this term
+      if (r.keyword_id && r.spend_cents > a.kwSpend) { a.keywordId = Number(r.keyword_id); a.kwSpend = r.spend_cents }
     }
   }
   addRows(spRes.data, 'SP')
@@ -72,11 +74,22 @@ export default async function SearchTermsPage({
   for (const c of spCampRes.data ?? []) { const k = `SP|${c.campaign_id}`; if (!campaignNames.has(k)) campaignNames.set(k, c.campaign_name) }
   for (const c of sbCampRes.data ?? []) { const k = `SB|${c.campaign_id}`; if (!campaignNames.has(k)) campaignNames.set(k, c.campaign_name) }
 
+  // Current bid per triggering target (keyword_id) for the Bid column
+  const allKwIds = [...new Set(Array.from(map.values()).map(t => t.keywordId).filter(Boolean))] as number[]
+  const bidMap = new Map<string, number>()  // `${adType}|${keyword_id}` → current bid_cents
+  if (allKwIds.length) {
+    const { data: kbh } = await supabase.from('keyword_bid_history').select('keyword_id, ad_type, bid_cents, recorded_date')
+      .eq('profile_id', profileId).in('keyword_id', allKwIds).order('recorded_date', { ascending: false }).range(0, 49999)
+    for (const r of kbh ?? []) { const k = `${(r.ad_type ?? 'sp').toUpperCase()}|${r.keyword_id}`; if (!bidMap.has(k)) bidMap.set(k, r.bid_cents) }
+  }
+
   let terms = Array.from(map.values()).map(t => ({
     term:             t.term,
     adType:           t.adType,
     matchType:        t.matchType,
     targetingKeyword: t.targetingKeyword,
+    keywordId:        t.keywordId,
+    bidCents:         t.keywordId ? (bidMap.get(`${t.adType}|${t.keywordId}`) ?? null) : null,
     campaignId:       t.campaignId,
     campaignName: campaignNames.get(`${t.adType}|${t.campaignId}`) ?? `Campaign ${t.campaignId}`,
     spend:  t.spend / 100,
@@ -126,7 +139,7 @@ export default async function SearchTermsPage({
   const totalWaste      = mode === 'wasted' ? terms.reduce((s, t) => s + t.spend, 0) : null
   const wastedKwCount   = mode === 'wasted' ? terms.filter(t => !isAsinType(t.matchType)).length : 0
   const wastedAsinCount = mode === 'wasted' ? terms.filter(t => isAsinType(t.matchType)).length : 0
-  const colCount        = mode === 'wasted' ? 10 : 9
+  const colCount        = mode === 'wasted' ? 11 : 10   // +1 for Bid column
 
   // Match type badge — distinguishes customer queries from ASIN matches and auto-targeting
   function termTypeBadge(matchType: string | null) {

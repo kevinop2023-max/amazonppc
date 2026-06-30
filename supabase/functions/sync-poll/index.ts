@@ -107,7 +107,7 @@ function n(v: any) { return Number(v ?? 0) }
 
 async function upsertSpCampaigns(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
-  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
+  const r = rows.map(r => ({ profile_id: pid, campaign_id: n(r.campaignId), date: r.date, campaign_name: r.campaignName ?? '', state: r.campaignStatus ?? 'enabled', daily_budget_cents: toCents(r.campaignBudgetAmount), top_of_search_is: r.topOfSearchImpressionShare != null ? Number(r.topOfSearchImpressionShare) : null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
   const { error } = await db.from('sp_campaigns').upsert(r, { onConflict: 'profile_id,campaign_id,date' })
   if (error) throw new Error(`sp_campaigns: ${error.message}`)
   return r.length

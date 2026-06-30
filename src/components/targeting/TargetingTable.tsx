@@ -43,7 +43,7 @@ function targetTypeLabel(mt: string, text: string) {
 
 type KwRow = {
   keyword_id: number; keyword_text: string; match_type: string; state: string
-  bid_cents: number; impressions: number; clicks: number; spend_cents: number
+  bid_cents: number; prev_bid_cents?: number | null; impressions: number; clicks: number; spend_cents: number
   sales_cents: number; orders: number; campaign_id: number; campaignName: string
 }
 type NegRow = {
@@ -257,8 +257,15 @@ export default function TargetingTable({ adType, activeTab, sortedGroups, negGro
                                   {kw.state}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 text-gray-700 tabular-nums">
-                                {kw.bid_cents ? fmt$(kw.bid_cents) : '—'}
+                              <td className="px-4 py-3 tabular-nums whitespace-nowrap">
+                                {!kw.bid_cents ? <span className="text-gray-400">—</span>
+                                  : (kw.prev_bid_cents != null && kw.prev_bid_cents !== kw.bid_cents) ? (
+                                    <span>
+                                      <span className="text-gray-400">{fmt$(kw.prev_bid_cents)}</span>
+                                      <span className="text-gray-300 mx-1">→</span>
+                                      <span className={kw.bid_cents > kw.prev_bid_cents ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'}>{fmt$(kw.bid_cents)}</span>
+                                    </span>
+                                  ) : <span className="text-gray-700">{fmt$(kw.bid_cents)}</span>}
                               </td>
                               <td className="px-4 py-3 text-gray-700 tabular-nums">{kw.impressions.toLocaleString()}</td>
                               <td className="px-4 py-3 text-gray-700 tabular-nums">{kw.clicks.toLocaleString()}</td>

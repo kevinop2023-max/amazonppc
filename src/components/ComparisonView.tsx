@@ -320,9 +320,9 @@ function CampExpanded({ camp, terms }: { camp: CampComp; terms: TermComp[] }) {
 
 // ── Campaigns tab ─────────────────────────────────────────────────────────────
 
-function CampaignsTab({ camps, terms, aStart, aEnd, bStart, bEnd }: {
+function CampaignsTab({ camps, terms, aStart, aEnd, bStart, bEnd, profileId }: {
   camps: CampComp[]; terms: TermComp[]
-  aStart: string; aEnd: string; bStart: string; bEnd: string
+  aStart: string; aEnd: string; bStart: string; bEnd: string; profileId: number
 }) {
   const aDays = Math.round((new Date(aEnd).getTime() - new Date(aStart).getTime()) / 86400000) + 1
   const bDays = Math.round((new Date(bEnd).getTime() - new Date(bStart).getTime()) / 86400000) + 1
@@ -422,7 +422,8 @@ function CampaignsTab({ camps, terms, aStart, aEnd, bStart, bEnd }: {
                         </button>
                       </td>
                       <td className="px-3 py-2.5 max-w-[200px]">
-                        <span className="font-medium text-gray-900 truncate block text-xs" title={c.name}>{c.name}</span>
+                        <a href={`/dashboard/campaigns/${c.id}?profile_id=${profileId}&type=${c.type}`}
+                          className="font-medium text-gray-900 hover:text-orange-600 hover:underline truncate block text-xs" title={c.name}>{c.name}</a>
                         {c.state !== 'enabled' && <span className="text-[10px] text-gray-400">({c.state})</span>}
                       </td>
                       <td className="px-2 py-2.5 text-center"><TypePill type={c.type} /></td>
@@ -1354,7 +1355,7 @@ export default function ComparisonView({ profileId, aStart, aEnd, bStart, bEnd, 
         </div>
       )}
 
-      {tab === 'campaigns' && <CampaignsTab camps={camps} terms={terms} aStart={aStart} aEnd={aEnd} bStart={bStart} bEnd={bEnd} />}
+      {tab === 'campaigns' && <CampaignsTab camps={camps} terms={terms} aStart={aStart} aEnd={aEnd} bStart={bStart} bEnd={bEnd} profileId={profileId} />}
       {tab === 'search-terms' && <SearchTermsTab terms={terms} />}
       {tab === 'keywords' && <KeywordsTab keywords={keywords} />}
       {tab === 'overlap' && <OverlapTab keywords={keywords} terms={terms} />}

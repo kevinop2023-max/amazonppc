@@ -62,6 +62,23 @@ export default async function TargetingPage({
     ? await Promise.all([fetchKw('sp_keywords', 'SP'), fetchKw('sb_keywords', 'SB')])
     : [await fetchKw(adType === 'sb' ? 'sb_keywords' : 'sp_keywords', adType.toUpperCase())]
 
+  // Previous distinct bid per keyword/target (for "last → current" display)
+  const { data: kbhRows } = activeProfileId
+    ? await supabase.from('keyword_bid_history').select('keyword_id, ad_type, bid_cents, recorded_date')
+        .eq('profile_id', activeProfileId).order('recorded_date', { ascending: true }).range(0, 49999)
+    : { data: [] as any[] }
+  const prevBidMap = new Map<string, number>()
+  {
+    const seq = new Map<string, number[]>()
+    for (const r of kbhRows ?? []) {
+      const k = `${(r.ad_type ?? 'sp').toUpperCase()}|${r.keyword_id}`
+      const arr = seq.get(k) ?? []
+      if (arr.length === 0 || arr[arr.length - 1] !== r.bid_cents) arr.push(r.bid_cents)  // distinct consecutive
+      seq.set(k, arr)
+    }
+    for (const [k, arr] of seq) if (arr.length >= 2) prevBidMap.set(k, arr[arr.length - 2])
+  }
+
   // Aggregate perf and meta per source
   type KwRow = { keyword_id: number; campaign_id: number; keyword_text: string; match_type: string; state: string; bid_cents: number; impressions: number; clicks: number; spend_cents: number; sales_cents: number; orders: number; adTypeMark: string }
   const allRows: KwRow[] = []
@@ -83,7 +100,7 @@ export default async function TargetingPage({
       if (r.top_of_search_is != null && !tosMap.has(r.keyword_id)) tosMap.set(r.keyword_id, r.top_of_search_is)
     }
     for (const [, r] of metaMap) {
-      allRows.push({ ...r, top_of_search_is: tosMap.get(r.keyword_id) ?? null, ...(perfMap.get(r.keyword_id) ?? { impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0 }), adTypeMark })
+      allRows.push({ ...r, top_of_search_is: tosMap.get(r.keyword_id) ?? null, prev_bid_cents: prevBidMap.get(`${adTypeMark}|${r.keyword_id}`) ?? null, ...(perfMap.get(r.keyword_id) ?? { impressions: 0, clicks: 0, spend_cents: 0, sales_cents: 0, orders: 0 }), adTypeMark })
     }
   }
 

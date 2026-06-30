@@ -59,7 +59,7 @@ export default async function CampaignDetailPage({
     supabase.from(table).select(metaCols).eq('profile_id', profileId).eq('campaign_id', campaignId).order('date', { ascending: false }).range(0, 49999),
     supabase.from('change_events').select('id, entity_type, entity_id, campaign_id, field, old_value, new_value, old_text, new_text, event_ts, ad_type, source').eq('profile_id', profileId).eq('campaign_id', campaignId).order('event_ts', { ascending: false }).range(0, 49999),
     adType === 'SP' ? supabase.from('sp_ad_groups').select('ad_group_id, ad_group_name, state, default_bid_cents, date').eq('profile_id', profileId).eq('campaign_id', campaignId).order('date', { ascending: false }).range(0, 49999) : noData,
-    supabase.from('keyword_bid_history').select('keyword_id, keyword_text, match_type').eq('profile_id', profileId).range(0, 49999),
+    supabase.from('keyword_bid_history').select('keyword_id, keyword_text, match_type, ad_type, bid_cents, recorded_date').eq('profile_id', profileId).order('recorded_date', { ascending: true }).range(0, 49999),
     adType === 'SP' ? supabase.from('ad_group_performance').select('ad_group_id, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).eq('campaign_id', campaignId).gte('date', startStr).lte('date', endStr).range(0, 49999) : noData,
     adType === 'SP' ? supabase.from('placement_performance').select('placement, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).eq('campaign_id', campaignId).gte('date', startStr).lte('date', endStr).range(0, 49999) : noData,
   ])
@@ -91,6 +91,14 @@ export default async function CampaignDetailPage({
   // Name resolution for change events
   const kwName = new Map<string, string>()
   for (const k of kbh ?? []) { const key = String(k.keyword_id); if (!kwName.has(key)) kwName.set(key, k.match_type ? `${k.keyword_text} (${k.match_type})` : k.keyword_text) }
+  // Current + previous distinct bid per keyword/target (kbh is ascending by date)
+  const curBidMap = new Map<string, number>()
+  const prevBidMap = new Map<string, number>()
+  {
+    const seq = new Map<string, number[]>()
+    for (const r of kbh ?? []) { const key = `${(r.ad_type ?? 'sp').toLowerCase()}|${r.keyword_id}`; const arr = seq.get(key) ?? []; if (arr.length === 0 || arr[arr.length - 1] !== r.bid_cents) arr.push(r.bid_cents); seq.set(key, arr) }
+    for (const [key, arr] of seq) { curBidMap.set(key, arr[arr.length - 1]); if (arr.length >= 2) prevBidMap.set(key, arr[arr.length - 2]) }
+  }
   const agNameMap = new Map<string, string>()
   for (const a of agRows ?? []) { const key = String(a.ad_group_id); if (!agNameMap.has(key) && a.ad_group_name) agNameMap.set(key, a.ad_group_name) }
   const nameFor = (e: any) => e.entity_type === 'CAMPAIGN' ? name
@@ -151,6 +159,42 @@ export default async function CampaignDetailPage({
   const stratChanges = chg.filter(e => e.field === 'SMART_BIDDING_STRATEGY').map(e => ({ ts: e.event_ts, from: e.old_text, to: e.new_text }))
   const strategy = { current: adType === 'SP' ? (meta.bidding_strategy ?? null) : null, changes: stratChanges }
 
+  // ── Targets (keywords + product/auto targets) + Search Terms for this campaign ──
+  const kwTable = adType === 'SB' ? 'sb_keywords' : adType === 'SP' ? 'sp_keywords' : null
+  const stTable = adType === 'SB' ? 'sb_search_terms' : adType === 'SP' ? 'sp_search_terms' : null
+  const atLower = adType.toLowerCase()
+  let targets: any[] = []
+  let searchTerms: any[] = []
+  if (kwTable) {
+    const [{ data: kwMeta }, { data: kwPerf }, { data: stRows }] = await Promise.all([
+      supabase.from(kwTable).select('keyword_id, keyword_text, match_type, state, bid_cents, date').eq('profile_id', profileId).eq('campaign_id', campaignId).order('date', { ascending: false }).range(0, 49999),
+      supabase.from(kwTable).select('keyword_id, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).eq('campaign_id', campaignId).gte('date', startStr).lte('date', endStr).range(0, 49999),
+      stTable ? supabase.from(stTable).select('keyword_id, customer_search_term, targeting_keyword, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).eq('campaign_id', campaignId).gte('date', startStr).lte('date', endStr).range(0, 49999) : Promise.resolve({ data: [] as any[] }),
+    ])
+    const tMeta = new Map<string, any>()
+    for (const r of kwMeta ?? []) { const k = String(r.keyword_id); if (!tMeta.has(k)) tMeta.set(k, r) }
+    const tPerf = new Map<string, Perf>()
+    for (const r of kwPerf ?? []) { const k = String(r.keyword_id); const p = tPerf.get(k) ?? zero(); p.spend_cents += r.spend_cents ?? 0; p.sales_cents += r.sales_cents ?? 0; p.orders += r.orders ?? 0; p.clicks += r.clicks ?? 0; tPerf.set(k, p) }
+    targets = [...tMeta.values()].map(r => ({
+      keyword_id: Number(r.keyword_id), text: r.keyword_text ?? '', match_type: r.match_type ?? '', state: (r.state ?? 'enabled').toLowerCase(),
+      bid_cents: r.bid_cents ?? 0, prev_bid_cents: prevBidMap.get(`${atLower}|${r.keyword_id}`) ?? null, ...(tPerf.get(String(r.keyword_id)) ?? zero()),
+    })).sort((a, b) => b.spend_cents - a.spend_cents)
+
+    const stMap = new Map<string, any>()
+    for (const r of stRows ?? []) {
+      const term = r.customer_search_term ?? ''; if (!term) continue
+      if (!stMap.has(term)) stMap.set(term, { term, keyword_id: null, kwSpend: -1, targeting: r.targeting_keyword ?? null, spend_cents: 0, sales_cents: 0, orders: 0, clicks: 0 })
+      const a = stMap.get(term)!
+      a.spend_cents += r.spend_cents ?? 0; a.sales_cents += r.sales_cents ?? 0; a.orders += r.orders ?? 0; a.clicks += r.clicks ?? 0
+      if (r.keyword_id && (r.spend_cents ?? 0) > a.kwSpend) { a.keyword_id = Number(r.keyword_id); a.kwSpend = r.spend_cents ?? 0 }
+    }
+    searchTerms = [...stMap.values()].map(a => ({
+      term: a.term, keyword_id: a.keyword_id, ad_type: adType, targeting: a.targeting,
+      bid_cents: a.keyword_id ? (curBidMap.get(`${atLower}|${a.keyword_id}`) ?? null) : null,
+      spend_cents: a.spend_cents, sales_cents: a.sales_cents, orders: a.orders, clicks: a.clicks,
+    })).sort((x, y) => y.spend_cents - x.spend_cents)
+  }
+
   const rangeLabel = isAllTime ? 'All time' : isCustom ? `${startStr} – ${endStr}` : `Last ${days} days`
   const dayLink = (d: string) => `/dashboard/campaigns/${campaignId}?profile_id=${profileId}&type=${adType}&days=${d}`
 
@@ -203,7 +247,7 @@ export default async function CampaignDetailPage({
       </div>
 
       {/* Tabs */}
-      <CampaignDetailTabs adType={adType} adGroups={adGroups} placements={placements} strategy={strategy} changeEvents={changeEvents} />
+      <CampaignDetailTabs adType={adType} adGroups={adGroups} placements={placements} strategy={strategy} changeEvents={changeEvents} targets={targets} searchTerms={searchTerms} />
     </div>
   )
 }

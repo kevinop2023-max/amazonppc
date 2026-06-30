@@ -67,10 +67,14 @@ export default async function CampaignsPage({
     // Two parallel queries: meta (all-time, for current state) + perf (date-range only)
     // Paused/archived campaigns have no rows in recent date ranges, so state must be
     // resolved from the most recent historical row, not filtered in the perf query.
+    const isSp = table === 'sp_campaigns'
+    const metaCols = isSp
+      ? 'campaign_id, campaign_name, state, daily_budget_cents, placement_top_pct, placement_product_pct, placement_rest_pct, top_of_search_is'
+      : 'campaign_id, campaign_name, state, daily_budget_cents'
     const [{ data: metaRows }, { data: perfRows }] = await Promise.all([
       supabase
         .from(table)
-        .select('campaign_id, campaign_name, state, daily_budget_cents')
+        .select(metaCols)
         .eq('profile_id', profileId!)
         .order('date', { ascending: false })
         .range(0, 49999),
@@ -83,12 +87,15 @@ export default async function CampaignsPage({
         .range(0, 49999),
     ])
 
-    // Most-recent state/name/budget per campaign (metaRows ordered date DESC)
-    const metaMap = new Map<number, { name: string; state: string; budget: number | null }>()
-    for (const r of metaRows ?? []) {
+    // Most-recent state/name/budget/placement per campaign (metaRows ordered date DESC).
+    // top_of_search_is: take the most-recent NON-NULL (Amazon reports it with a lag).
+    const metaMap = new Map<number, { name: string; state: string; budget: number | null; pTop: number | null; pProd: number | null; pRest: number | null; tosIs: number | null }>()
+    for (const r of (metaRows ?? []) as any[]) {
       if (!metaMap.has(r.campaign_id)) {
-        metaMap.set(r.campaign_id, { name: r.campaign_name, state: (r.state ?? 'enabled').toLowerCase(), budget: r.daily_budget_cents })
+        metaMap.set(r.campaign_id, { name: r.campaign_name, state: (r.state ?? 'enabled').toLowerCase(), budget: r.daily_budget_cents, pTop: r.placement_top_pct ?? null, pProd: r.placement_product_pct ?? null, pRest: r.placement_rest_pct ?? null, tosIs: null })
       }
+      const m = metaMap.get(r.campaign_id)!
+      if (m.tosIs == null && r.top_of_search_is != null) m.tosIs = Number(r.top_of_search_is)
     }
 
     // Aggregate performance within selected date range
@@ -109,7 +116,7 @@ export default async function CampaignsPage({
       .filter(([, m]) => !state || m.state === state)
       .map(([id, m]) => {
         const p = perfMap.get(id) ?? { spend: 0, sales: 0, orders: 0, impressions: 0, clicks: 0 }
-        return { campaign_id: id, name: m.name, state: m.state, ad_type: adType, budget: m.budget, ...p }
+        return { campaign_id: id, name: m.name, state: m.state, ad_type: adType, budget: m.budget, pTop: m.pTop, pProd: m.pProd, pRest: m.pRest, tosIs: m.tosIs, ...p }
       })
   }
 
@@ -248,6 +255,9 @@ export default async function CampaignsPage({
             <thead>
               <tr className="border-b border-gray-50">
                 <th className="text-left px-5 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Campaign</th>
+                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Budget</th>
+                <th className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">ToS IS</th>
+                <th className="text-left px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">Placement</th>
                 {cols.map(col => (
                   <th key={col.key} className="text-right px-4 py-3.5 text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">
                     <Link href={sortUrl(col.key)} className={`inline-flex items-center justify-end gap-0.5 hover:text-gray-700 transition-colors ${sortKey === col.key ? 'text-gray-700' : ''}`}>
@@ -260,7 +270,7 @@ export default async function CampaignsPage({
             <tbody>
               {campaigns.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-16 text-center text-sm text-gray-400">
+                  <td colSpan={13} className="px-5 py-16 text-center text-sm text-gray-400">
                     No campaign data for this period. Sync your account to get started.
                   </td>
                 </tr>
@@ -277,6 +287,22 @@ export default async function CampaignsPage({
                         <span className="text-[10px] text-gray-400 shrink-0">({c.state})</span>
                       )}
                     </div>
+                  </td>
+                  {/* Budget */}
+                  <td className="px-4 py-3.5 text-right text-gray-600 text-sm tabular-nums whitespace-nowrap">
+                    {c.budget ? <>${(c.budget / 100).toFixed(2)}<span className="text-gray-400 text-[11px]">/day</span></> : <span className="text-gray-300">—</span>}
+                  </td>
+                  {/* ToS IS */}
+                  <td className="px-4 py-3.5 text-right text-gray-600 text-sm tabular-nums">
+                    {(c as any).tosIs != null ? `${(c as any).tosIs.toFixed(1)}%` : <span className="text-gray-300">—</span>}
+                  </td>
+                  {/* Placement multipliers */}
+                  <td className="px-4 py-3.5 text-left">
+                    {c.ad_type !== 'SP' ? <span className="text-gray-300 text-sm">—</span> : (() => {
+                      const parts = ([['ToS', (c as any).pTop], ['PP', (c as any).pProd], ['Rest', (c as any).pRest]] as [string, number | null][]).filter(([, v]) => v != null && v > 0)
+                      if (!parts.length) return <span className="text-gray-300 text-sm">—</span>
+                      return <div className="flex flex-col gap-0.5">{parts.map(([l, v]) => <span key={l} className="text-[10px] font-medium text-teal-600 leading-tight whitespace-nowrap">{l} +{v}%</span>)}</div>
+                    })()}
                   </td>
                   <td className="px-4 py-3.5 text-right font-semibold text-gray-900 text-sm tabular-nums">
                     ${(c.spend / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

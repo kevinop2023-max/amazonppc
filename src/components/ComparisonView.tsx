@@ -131,10 +131,22 @@ function BidHistoryPanel({ history, label, onClose }: { history: BidRecord[]; la
   )
 }
 
-// Last up-to-3 bid changes as "$a → $b → $c"
-function bidLast3(history: BidRecord[]) {
-  if (!history.length) return '—'
-  return history.slice(-3).map(h => fmtD(h.bidCents)).join(' → ')
+// Last up-to-3 bid changes as "$a → $b → $c", each step green (up) / red (down) vs the previous.
+function BidLast3({ history }: { history: BidRecord[] }) {
+  if (!history.length) return <span className="text-gray-300">—</span>
+  const last3 = history.slice(-3)
+  return (
+    <span className="tabular-nums whitespace-nowrap">
+      {last3.map((h, i) => {
+        const prev = i > 0 ? last3[i - 1].bidCents : null
+        const cls = prev == null ? 'text-gray-500'
+          : h.bidCents > prev ? 'text-emerald-600 font-semibold'
+          : h.bidCents < prev ? 'text-red-600 font-semibold'
+          : 'text-gray-600'
+        return <span key={i}>{i > 0 && <span className="text-gray-300 mx-1">→</span>}<span className={cls}>{fmtD(h.bidCents)}</span></span>
+      })}
+    </span>
+  )
 }
 
 // ── Primitive components ──────────────────────────────────────────────────────
@@ -318,7 +330,7 @@ function CampExpanded({ camp, terms }: { camp: CampComp; terms: TermComp[] }) {
                         <td className="px-3 py-2 text-right text-[11px] text-blue-600 tabular-nums">{tAa !== null ? tAa.toFixed(1) + '%' : '—'}</td>
                         <td className="px-3 py-2 text-right text-[11px] text-purple-600 font-semibold tabular-nums">{t.bOrders}</td>
                         <td className="px-3 py-2 text-right text-[11px] text-purple-600 tabular-nums">{tBa !== null ? tBa.toFixed(1) + '%' : '—'}</td>
-                        <td className="px-3 py-2 text-right text-[11px] text-gray-600 tabular-nums whitespace-nowrap">{bidLast3(t.bidHistory)}</td>
+                        <td className="px-3 py-2 text-right text-[11px]"><BidLast3 history={t.bidHistory} /></td>
                         <td className="px-3 py-2 text-center">
                           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusCls}`}>{status}</span>
                         </td>

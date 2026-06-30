@@ -464,15 +464,8 @@ async function syncChangeHistory(token: string, pid: string, db: any, numericPid
     if (!nextToken || !events.length) break
   }
 
-  // Persist first-call diagnostics to a probe row (sync-poll ignores non-pending statuses)
-  // so the exact response shape (entityId format + metadata fields) is verifiable after deploy.
-  try {
-    await db.from('sync_logs').insert({
-      profile_id: numericPid, triggered_by: 'history_probe', status: 'success',
-      started_at: new Date().toISOString(),
-      report_ids: { fromMs, toMs, fetched: all.length, firstDiag },
-    })
-  } catch (e) { console.log(`[sync] history probe-log: ${e}`) }
+  // Diagnostics to logs only (no sync_logs row — keeps Sync History UI clean).
+  console.log(`[sync] history diag: from=${new Date(fromMs).toISOString()} to=${new Date(toMs).toISOString()} fetched=${all.length} firstDiag=${JSON.stringify(firstDiag)}`)
 
   const rows = all.map(ev => mapHistoryEvent(ev, numericPid)).filter(Boolean)
   if (rows.length) {
@@ -614,12 +607,10 @@ Deno.serve(async (req) => {
       console.log(`[sync] Creating SP reports for ${startDate} → ${endDate}...`)
       // maxRetries=0 for SP — fail fast. SP is almost never throttled; a null ID just
       // means 0 records for that report this batch, which is recoverable on next sync.
-      const [spCamp, spKw, spSt, spAg, spPlace] = await Promise.all([
+      const [spCamp, spKw, spSt] = await Promise.all([
         createReport(token, pid, 'SP Campaigns', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['campaign'],   SP_CAMP, startDate, endDate, undefined, 0),
         createReport(token, pid, 'SP Keywords',  'SPONSORED_PRODUCTS', 'spTargeting',  ['targeting'],  SP_KW,   startDate, endDate, undefined, 0),
         createReport(token, pid, 'SP Terms',     'SPONSORED_PRODUCTS', 'spSearchTerm', ['searchTerm'], SP_ST,   startDate, endDate, undefined, 0),
-        createReport(token, pid, 'SP Ad Groups', 'SPONSORED_PRODUCTS', 'spCampaigns',  ['adGroup'],          SP_AG,    startDate, endDate, undefined, 0),
-        createReport(token, pid, 'SP Placements','SPONSORED_PRODUCTS', 'spCampaigns',  ['campaignPlacement'], SP_PLACE, startDate, endDate, undefined, 0),
       ])
 
       // Insert log entry immediately after SP — visible in sync history within seconds.
@@ -631,7 +622,7 @@ Deno.serve(async (req) => {
         started_at: new Date().toISOString(),
         date_range_start: startDate,
         date_range_end: endDate,
-        report_ids: { spCamp, spKw, spSt, spAg, spPlace, startDate, endDate },
+        report_ids: { spCamp, spKw, spSt, startDate, endDate },
       }).select('id').single()
       if (log?.id) logIds.push(log.id)
 
@@ -650,14 +641,15 @@ Deno.serve(async (req) => {
         // Old code used maxRetries=3 (15+30+60s) for sbCamp/sbKw/sbSt — that alone could timeout.
         sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate, undefined, 1)
         await new Promise(r => setTimeout(r, 3000))
-        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 0)
+        // sbCamp is NON-optional (its absence = Partial). One retry guards against transient 429.
+        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 1)
         await new Promise(r => setTimeout(r, 5000))
         sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate, undefined, 0)
         await new Promise(r => setTimeout(r, 5000))
         sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate, undefined, 0)
       } else {
-        // Batch 2: sbAttr LAST. All maxRetries=0 — no retries to stay within 150s total budget.
-        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 0)
+        // Batch 2: sbAttr LAST. sbCamp gets one retry (NON-optional → its absence = Partial).
+        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 1)
         await new Promise(r => setTimeout(r, 5000))
         sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate, undefined, 0)
         await new Promise(r => setTimeout(r, 5000))
@@ -671,6 +663,13 @@ Deno.serve(async (req) => {
       const [sdCamp] = await Promise.all([
         createReport(token, pid, 'SD Campaigns', 'SPONSORED_DISPLAY', 'sdCampaigns', ['campaign'], SD_CAMP, startDate, endDate, undefined, 0),
       ])
+
+      // SP ad-group + placement perf — OPTIONAL, created LAST so they never pressure the
+      // critical SP/SB report creations (avoids throttling sbCamp → Partial). Sequential, fail-fast.
+      await new Promise(r => setTimeout(r, 3000))
+      const spAg    = await createReport(token, pid, 'SP Ad Groups', 'SPONSORED_PRODUCTS', 'spCampaigns', ['adGroup'],           SP_AG,    startDate, endDate, undefined, 0)
+      await new Promise(r => setTimeout(r, 3000))
+      const spPlace = await createReport(token, pid, 'SP Placements','SPONSORED_PRODUCTS', 'spCampaigns', ['campaignPlacement'], SP_PLACE, startDate, endDate, undefined, 0)
 
       // Patch in the SB/SD report IDs and flip to 'reports_pending' — pg_cron can now pick this up.
       if (log?.id) {

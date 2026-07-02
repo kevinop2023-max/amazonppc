@@ -117,7 +117,11 @@ function TermRows({ terms, omitted }: { terms: TermItem[]; omitted: number }) {
         const cvrB = t.bClicks > 0 ? (t.bOrders / t.bClicks * 100).toFixed(1) + '%' : '—'
         return (
           <tr key={i} className="border-b border-gray-50 last:border-0">
-            <td className="px-4 py-1.5 text-[11px] text-gray-700 max-w-[260px] truncate" title={t.term}>{t.term}</td>
+            <td className="px-4 py-1.5 text-[11px] text-gray-700 max-w-[260px] truncate" title={t.term}>
+              {t.placeholder
+                ? <span className="italic text-gray-400">{t.term} <span className="text-[9px]">(query hidden by Amazon)</span></span>
+                : t.term}
+            </td>
             <td className="px-2 py-1.5"><TermTypeBadge mt={t.matchType} /></td>
             <td className="px-2 py-1.5"><ABCell a={t.aSpend} b={t.bSpend} money /></td>
             <td className="px-2 py-1.5"><ABCell a={t.aSales} b={t.bSales} money /></td>
@@ -148,14 +152,20 @@ function TermTypeBadge({ mt }: { mt: string | null }) {
 // Bid history chart with real change-event markers
 function BidChart({ target }: { target: TargetItem }) {
   const data = target.bidHistory.map(h => ({ date: h.date, bid: h.bidCents / 100 }))
-  // Snap each real change event to the nearest recorded history date so ReferenceLine lands on the axis
+  // Snap each real change event to the nearest recorded history date so ReferenceLine lands
+  // on the axis. Events BEFORE the history window are dropped (they'd all pile up on the
+  // first date) — the campaign change-chips row still shows them.
   const markers = useMemo(() => {
     const dates = data.map(d => d.date)
-    return target.bidEvents.map(ev => {
-      const d = ev.ts.slice(0, 10)
-      const snapped = dates.find(x => x >= d) ?? dates[dates.length - 1]
-      return { x: snapped, label: `${ev.old_value != null ? fmtD(ev.old_value) : ''}→${ev.new_value != null ? fmtD(ev.new_value) : ''}` }
-    }).filter(m => m.x)
+    const first = dates[0]
+    return target.bidEvents
+      .filter(ev => ev.ts.slice(0, 10) >= first)
+      .map(ev => {
+        const d = ev.ts.slice(0, 10)
+        const snapped = dates.find(x => x >= d) ?? dates[dates.length - 1]
+        return { x: snapped, label: `${ev.old_value != null ? fmtD(ev.old_value) : ''}→${ev.new_value != null ? fmtD(ev.new_value) : ''}` }
+      })
+      .filter(m => m.x)
   }, [target, data])
 
   if (data.length < 2) {
@@ -226,7 +236,7 @@ export default function CampaignSection({ group: g, tab, anchor, defaultOpen, on
           {/* Change chips */}
           {g.changeChips.length > 0 && (
             <div className="px-4 py-2.5 bg-gray-50/50 border-b border-gray-100 flex flex-wrap gap-1.5 items-center">
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mr-1">Changes</span>
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mr-1">Changes — click one to compare before → after</span>
               {g.changeChips.map(c => (
                 <ChipButton key={c.id} chip={c} anchored={anchor === String(c.id)} onAnchor={onAnchor} />
               ))}

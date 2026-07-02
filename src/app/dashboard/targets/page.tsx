@@ -227,16 +227,19 @@ export default async function TargetsPage({
   for (const r of plB.data ?? []) accumulate(plAB, `${r.campaign_id}|${placeBucket(r.placement)}`, 'b', r)
 
   // ── Search terms: A/B per (adType, campaign, term) + triggering-target attribution ──
-  type TermAgg = AB & { term: string; matchType: string | null; targeting: string | null; keywordId: string | null; kwSpend: number; campaignId: string; adType: 'SP' | 'SB' }
+  type TermAgg = AB & { term: string; matchType: string | null; targeting: string | null; keywordId: string | null; kwSpend: number; campaignId: string; adType: 'SP' | 'SB'; placeholder: boolean }
   const termMap = new Map<string, TermAgg>()
   const readTerms = (rows: any[], ad: 'SP' | 'SB', side: 'a' | 'b') => {
     for (const r of rows) {
       const term = (r.customer_search_term ?? '').trim()
       if (!term) continue
       const tl = term.toLowerCase()
-      if (MATCH_GROUPS.has(tl) || isAsin(tl)) continue
+      // Match-group placeholders ("loose-match" etc. as the term) and bare-ASIN rows are kept —
+      // they carry real spend/sales, so dropping them makes term sums diverge from target totals.
+      // They're flagged so the UI can label them.
+      const placeholder = MATCH_GROUPS.has(tl) || isAsin(tl)
       const key = `${ad}|${r.campaign_id}|${tl}`
-      if (!termMap.has(key)) termMap.set(key, { ...zeroAB(), term, matchType: r.match_type ?? null, targeting: r.targeting_keyword ?? null, keywordId: null, kwSpend: -1, campaignId: String(r.campaign_id), adType: ad })
+      if (!termMap.has(key)) termMap.set(key, { ...zeroAB(), term, matchType: r.match_type ?? null, targeting: r.targeting_keyword ?? null, keywordId: null, kwSpend: -1, campaignId: String(r.campaign_id), adType: ad, placeholder })
       const t = termMap.get(key)!
       addSide(t, side, r)
       if (r.keyword_id && (r.spend_cents ?? 0) > t.kwSpend) { t.keywordId = String(r.keyword_id); t.kwSpend = r.spend_cents ?? 0 }
@@ -258,7 +261,7 @@ export default async function TargetsPage({
   const termsByTarget = new Map<string, TermItem[]>()     // `${AD}|${keyword_id}`
   const unattributed = new Map<string, TermItem[]>()      // `${AD}|${campaign_id}`
   for (const [, t] of termMap) {
-    const item: TermItem = { term: t.term, matchType: t.matchType, keywordId: t.keywordId, aSpend: t.aSpend, aSales: t.aSales, aOrders: t.aOrders, aClicks: t.aClicks, aImp: t.aImp, bSpend: t.bSpend, bSales: t.bSales, bOrders: t.bOrders, bClicks: t.bClicks, bImp: t.bImp }
+    const item: TermItem = { term: t.term, matchType: t.matchType, keywordId: t.keywordId, placeholder: t.placeholder, aSpend: t.aSpend, aSales: t.aSales, aOrders: t.aOrders, aClicks: t.aClicks, aImp: t.aImp, bSpend: t.bSpend, bSales: t.bSales, bOrders: t.bOrders, bClicks: t.bClicks, bImp: t.bImp }
     let kwKey = t.keywordId && kwMeta.has(`${t.adType}|${t.keywordId}`) ? `${t.adType}|${t.keywordId}` : null
     if (!kwKey && t.targeting) {
       const viaText = textToKw.get(`${t.adType}|${t.campaignId}|${t.targeting.trim().toLowerCase()}`)
@@ -284,7 +287,8 @@ export default async function TargetsPage({
     const hasActivity = ab.aSpend + ab.bSpend + ab.aClicks + ab.bClicks + ab.aImp + ab.bImp > 0
     if (!hasActivity && m.state !== 'enabled') continue
     const hist = bidHistMap.get(k) ?? []
-    const terms = (termsByTarget.get(k) ?? []).sort((x, y) => (y.bSpend + y.aSpend) - (x.bSpend + x.aSpend))
+    // Sales-B first (what actually sold after the change), then spend-B — keeps sellers on top
+    const terms = (termsByTarget.get(k) ?? []).sort((x, y) => y.bSales - x.bSales || y.bSpend - x.bSpend)
     const targetType = getTargetType({ match_type: m.matchType, keyword_text: m.text })
     tabCounts.all++; tabCounts[targetType]++
     const item: TargetItem = {
@@ -313,7 +317,7 @@ export default async function TargetsPage({
     if (!meta) continue
     const ab = campAB.get(ck) ?? zeroAB()
     const targets = (byCampaign.get(ck) ?? []).sort((x, y) => (y.bSpend + y.aSpend) - (x.bSpend + x.aSpend))
-    const un = (unattributed.get(ck) ?? []).sort((x, y) => (y.bSpend + y.aSpend) - (x.bSpend + x.aSpend))
+    const un = (unattributed.get(ck) ?? []).sort((x, y) => y.bSales - x.bSales || y.bSpend - x.bSpend)
     if (!targets.length && !un.length) continue
 
     const placements: PlacementInfo[] = ad === 'SP' ? ([

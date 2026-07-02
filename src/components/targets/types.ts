@@ -23,6 +23,7 @@ export type TermItem = AB & {
   term: string
   matchType: string | null
   keywordId: string | null   // triggering target (max-spend keyword_id), null = unattributed
+  placeholder?: boolean      // match-group placeholder or bare-ASIN row (Amazon hides the real query)
 }
 
 export type TargetItem = AB & {

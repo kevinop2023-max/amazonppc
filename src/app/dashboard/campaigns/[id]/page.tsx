@@ -63,7 +63,7 @@ export default async function CampaignDetailPage({
     adType === 'SP' ? supabase.from('sp_ad_groups').select('ad_group_id, ad_group_name, state, default_bid_cents, date').eq('profile_id', profileId).eq('campaign_id', campaignId).order('date', { ascending: false }).range(0, 49999) : noData,
     supabase.from('keyword_bid_history').select('keyword_id, keyword_text, match_type, ad_type, bid_cents, recorded_date').eq('profile_id', profileId).order('recorded_date', { ascending: true }).range(0, 49999),
     adType === 'SP' ? supabase.from('ad_group_performance').select('ad_group_id, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).eq('campaign_id', campaignId).gte('date', startStr).lte('date', endStr).range(0, 49999) : noData,
-    adType === 'SP' ? supabase.from('placement_performance').select('placement, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).eq('campaign_id', campaignId).gte('date', startStr).lte('date', endStr).range(0, 49999) : noData,
+    adType !== 'SD' ? supabase.from('placement_performance').select('placement, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).eq('campaign_id', campaignId).gte('date', startStr).lte('date', endStr).range(0, 49999) : noData,
   ])
 
   const all = (rows ?? []) as any[]
@@ -150,13 +150,31 @@ export default async function CampaignDetailPage({
   for (const [k, r] of agMeta) { const p = agPerfMap.get(k); if (p) Object.assign(r, p) }
   const adGroups = [...agMeta.values()].sort((a, b) => b.spend_cents - a.spend_cents || a.name.localeCompare(b.name))
 
-  // Placements (SP)
-  const placements: PlacementRow[] = adType === 'SP' ? [
-    { key: 'PLACEMENT_TOP', label: 'Top of search', current: Number(meta.placement_top_pct ?? 0), events: [], ...zero() },
-    { key: 'PLACEMENT_PRODUCT_PAGE', label: 'Product pages', current: Number(meta.placement_product_pct ?? 0), events: [], ...zero() },
-    { key: 'PLACEMENT_REST_OF_SEARCH', label: 'Rest of search', current: Number(meta.placement_rest_pct ?? 0), events: [], ...zero() },
+  // Placements (SP + SB — sbCampaignPlacement report populates placement_performance for SB too)
+  const placements: PlacementRow[] = adType !== 'SD' ? [
+    { key: 'PLACEMENT_TOP', label: 'Top of search', current: adType === 'SP' ? Number(meta.placement_top_pct ?? 0) : 0, events: [], ...zero() },
+    { key: 'PLACEMENT_PRODUCT_PAGE', label: adType === 'SP' ? 'Product pages' : 'Detail page', current: adType === 'SP' ? Number(meta.placement_product_pct ?? 0) : 0, events: [], ...zero() },
+    { key: 'PLACEMENT_REST_OF_SEARCH', label: 'Rest of search', current: adType === 'SP' ? Number(meta.placement_rest_pct ?? 0) : 0, events: [], ...zero() },
   ] : []
-  for (const e of chg) { const p = placements.find(x => x.key === e.field); if (p) p.events.push({ ts: e.event_ts, old_value: Number(e.old_value), new_value: Number(e.new_value) }) }
+  // API events use field=PLACEMENT_GROUP + metadata.placementGroupPosition (TOP / REST_OF_SEARCH /
+  // DETAIL_PAGE; SB: TOP / OTHER / HOME). Legacy snapshot rows used the PLACEMENT_* field names.
+  const POS_TO_KEY: Record<string, string> = {
+    TOP: 'PLACEMENT_TOP', DETAIL_PAGE: 'PLACEMENT_PRODUCT_PAGE', PRODUCT_PAGE: 'PLACEMENT_PRODUCT_PAGE',
+    PRODUCT_PAGES: 'PLACEMENT_PRODUCT_PAGE', REST_OF_SEARCH: 'PLACEMENT_REST_OF_SEARCH',
+    OTHER: 'PLACEMENT_REST_OF_SEARCH', HOME: 'PLACEMENT_REST_OF_SEARCH',
+  }
+  for (const e of chg) {
+    const key = e.field === 'PLACEMENT_GROUP'
+      ? (e.metadata?.placementGroupPosition ? POS_TO_KEY[e.metadata.placementGroupPosition] ?? null : null)
+      : e.field
+    const p = key ? placements.find(x => x.key === key) : null
+    if (p) p.events.push({ ts: e.event_ts, old_value: Number(e.old_value), new_value: Number(e.new_value) })
+  }
+  // SB current adjustment: no config columns exist — derive from the latest event (multiplier-form, 110 = +10%)
+  if (adType === 'SB') for (const p of placements) {
+    const last = p.events[p.events.length - 1]
+    if (last?.new_value != null) p.current = Number(last.new_value) - 100
+  }
   for (const p of placements) { const pf = placePerfMap.get(p.key); if (pf) Object.assign(p, pf) }
 
   // Strategy (SP)

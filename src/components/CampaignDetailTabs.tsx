@@ -43,7 +43,7 @@ export default function CampaignDetailTabs({
   targets: TargetRow[]
   searchTerms: STRow[]
 }) {
-  const [tab, setTab] = useState<'adgroups' | 'searchterms' | 'targets'>('adgroups')
+  const [tab, setTab] = useState<'adgroups' | 'targets' | 'changes'>('adgroups')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [bidHistory, setBidHistory] = useState<{ date: string; bid: number }[]>([])
   const [loadingBid, setLoadingBid] = useState(false)
@@ -59,10 +59,25 @@ export default function CampaignDetailTabs({
     })
   }
 
+  // Nest search terms under their triggering target (max-spend keyword_id) — like the Targets page.
+  const targetIds = new Set(targets.map(t => String(t.keyword_id)))
+  const termsByTarget = new Map<string, STRow[]>()
+  const unattributedTerms: STRow[] = []
+  for (const s of searchTerms) {
+    if (s.keyword_id && targetIds.has(String(s.keyword_id))) {
+      const k = String(s.keyword_id)
+      if (!termsByTarget.has(k)) termsByTarget.set(k, [])
+      termsByTarget.get(k)!.push(s)
+    } else unattributedTerms.push(s)
+  }
+  const bySales = (a: STRow, b: STRow) => b.sales_cents - a.sales_cents || b.spend_cents - a.spend_cents
+  for (const [, arr] of termsByTarget) arr.sort(bySales)
+  unattributedTerms.sort(bySales)
+
   const TABS = [
-    { key: 'adgroups',    label: 'Ad Groups',    n: adGroups.length },
-    { key: 'searchterms', label: 'Search Terms', n: searchTerms.length },
-    { key: 'targets',     label: 'Targets',      n: targets.length },
+    { key: 'adgroups', label: 'Ad Groups', n: adGroups.length },
+    { key: 'targets',  label: 'Targets & Search Terms', n: targets.length },
+    { key: 'changes',  label: 'Changes', n: changeEvents.length },
   ] as const
 
   const bidHistoryRow = (rowKey: string, colSpan: number) => expanded === rowKey && (
@@ -147,9 +162,9 @@ export default function CampaignDetailTabs({
             )
           )}
 
-          {/* Targets (keywords + product/auto targets) */}
+          {/* Targets & Search Terms — targets with their triggered terms nested (Targets-page style) */}
           {tab === 'targets' && (
-            targets.length === 0 ? <Empty msg="No targets for this campaign in range." /> : (
+            targets.length === 0 && unattributedTerms.length === 0 ? <Empty msg="No targets for this campaign in range." /> : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -158,74 +173,93 @@ export default function CampaignDetailTabs({
                       <th className="px-3 py-2 font-medium">State</th><th className="px-3 py-2 font-medium">Bid</th>
                       <th className="px-3 py-2 font-medium text-right">Spend</th><th className="px-3 py-2 font-medium text-right">Sales</th>
                       <th className="px-3 py-2 font-medium text-right">ACoS</th><th className="px-3 py-2 font-medium text-right">Orders</th>
+                      <th className="px-3 py-2 font-medium text-right">Terms</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {targets.map(t => { const rk = `t-${t.keyword_id}`; return (
-                      <React.Fragment key={rk}>
-                        <tr className="border-b border-gray-50 hover:bg-gray-50/50">
-                          <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[260px] truncate" title={t.text}>{t.text || '—'}</td>
-                          <td className="px-3 py-2.5">{matchBadge(t.match_type)}</td>
-                          <td className="px-3 py-2.5"><span className="text-[11px] text-gray-500 capitalize">{t.state}</span></td>
-                          <td className="px-3 py-2.5 tabular-nums">
-                            {t.bid_cents ? <button onClick={() => handleExpandBid(rk, t.keyword_id, adType)} className="hover:underline hover:text-orange-600"><BidLastCurrent prev={t.prev_bid_cents} cur={t.bid_cents} /></button> : <span className="text-gray-300">—</span>}
+                    {targets.map(t => {
+                      const rk = `t-${t.keyword_id}`
+                      const terms = termsByTarget.get(String(t.keyword_id)) ?? []
+                      const isOpen = expanded === rk
+                      return (
+                        <React.Fragment key={rk}>
+                          <tr className={`border-b border-gray-50 cursor-pointer ${isOpen ? 'bg-orange-50/40' : 'hover:bg-gray-50/50'}`}
+                            onClick={() => handleExpandBid(rk, t.keyword_id, adType)}>
+                            <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[260px] truncate" title={t.text}>
+                              <span className="text-[10px] text-gray-300 mr-1.5">{isOpen ? '▾' : '▸'}</span>{t.text || '—'}
+                            </td>
+                            <td className="px-3 py-2.5">{matchBadge(t.match_type)}</td>
+                            <td className="px-3 py-2.5"><span className="text-[11px] text-gray-500 capitalize">{t.state}</span></td>
+                            <td className="px-3 py-2.5 tabular-nums">{t.bid_cents ? <BidLastCurrent prev={t.prev_bid_cents} cur={t.bid_cents} /> : <span className="text-gray-300">—</span>}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{t.spend_cents ? fmtD(t.spend_cents) : '—'}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{t.sales_cents ? fmtD(t.sales_cents) : '—'}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{acosOf(t)}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{t.orders || '—'}</td>
+                            <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{terms.length || '—'}</td>
+                          </tr>
+                          {isOpen && (
+                            <tr className="bg-orange-50/20 border-b border-orange-100">
+                              <td colSpan={9} className="px-4 py-4">
+                                <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                                  <div className="lg:col-span-2">
+                                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Bid history</p>
+                                    {loadingBid ? <p className="text-xs text-gray-400 py-4">Loading bid history…</p>
+                                      : bidHistory.length === 0 ? <p className="text-xs text-gray-400 py-4">No bid history recorded yet.</p>
+                                      : (
+                                        <div className="h-32">
+                                          <ResponsiveContainer width="100%" height="100%">
+                                            <LineChart data={bidHistory}>
+                                              <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={d => d.slice(5)} />
+                                              <YAxis tick={{ fontSize: 9 }} tickFormatter={v => '$' + v.toFixed(2)} width={44} />
+                                              <Tooltip formatter={(v: number) => ['$' + v.toFixed(2), 'Bid']} labelFormatter={l => 'Date: ' + l} />
+                                              <Line type="stepAfter" dataKey="bid" stroke="#2563eb" dot={false} strokeWidth={2} />
+                                            </LineChart>
+                                          </ResponsiveContainer>
+                                        </div>
+                                      )}
+                                  </div>
+                                  <div className="lg:col-span-3">
+                                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Search terms triggered by this target ({terms.length})</p>
+                                    <TermsTable terms={terms} />
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
+                    {/* Search terms not attributable to a target */}
+                    {unattributedTerms.length > 0 && (
+                      <>
+                        <tr className="border-b border-gray-50 bg-gray-50/40 cursor-pointer hover:bg-gray-50"
+                          onClick={() => setExpanded(expanded === 'unattr' ? null : 'unattr')}>
+                          <td colSpan={9} className="px-3 py-2 text-[11px] text-gray-500">
+                            {expanded === 'unattr' ? '▾' : '▸'} <span className="italic">Search terms not attributed to a target</span> · {unattributedTerms.length}
                           </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{t.spend_cents ? fmtD(t.spend_cents) : '—'}</td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{t.sales_cents ? fmtD(t.sales_cents) : '—'}</td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{acosOf(t)}</td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{t.orders || '—'}</td>
                         </tr>
-                        {bidHistoryRow(rk, 8)}
-                      </React.Fragment>
-                    )})}
+                        {expanded === 'unattr' && (
+                          <tr className="bg-gray-50/30"><td colSpan={9} className="px-4 py-3"><TermsTable terms={unattributedTerms} /></td></tr>
+                        )}
+                      </>
+                    )}
                   </tbody>
                 </table>
               </div>
             )
           )}
 
-          {/* Search Terms */}
-          {tab === 'searchterms' && (
-            searchTerms.length === 0 ? <Empty msg="No search terms for this campaign in range." /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                      <th className="px-3 py-2 font-medium">Search term</th><th className="px-3 py-2 font-medium">Triggered by</th>
-                      <th className="px-3 py-2 font-medium">Bid</th><th className="px-3 py-2 font-medium text-right">Spend</th>
-                      <th className="px-3 py-2 font-medium text-right">Sales</th><th className="px-3 py-2 font-medium text-right">ACoS</th>
-                      <th className="px-3 py-2 font-medium text-right">Orders</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {searchTerms.map((s, i) => { const rk = `s-${i}`; return (
-                      <React.Fragment key={rk}>
-                        <tr className="border-b border-gray-50 hover:bg-gray-50/50">
-                          <td className="px-3 py-2.5 font-medium text-gray-900 max-w-[260px] truncate" title={s.term}>{s.term}</td>
-                          <td className="px-3 py-2.5 text-xs text-gray-500 max-w-[160px] truncate">{s.targeting || '—'}</td>
-                          <td className="px-3 py-2.5 tabular-nums">
-                            {s.bid_cents != null && s.keyword_id ? <button onClick={() => handleExpandBid(rk, s.keyword_id!, s.ad_type)} className="hover:underline hover:text-orange-600"><BidLastCurrent prev={s.prev_bid_cents ?? null} cur={s.bid_cents} /></button> : <span className="text-gray-300">—</span>}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{s.spend_cents ? fmtD(s.spend_cents) : '—'}</td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{s.sales_cents ? fmtD(s.sales_cents) : '—'}</td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{acosOf(s)}</td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{s.orders || '—'}</td>
-                        </tr>
-                        {bidHistoryRow(rk, 7)}
-                      </React.Fragment>
-                    )})}
-                  </tbody>
-                </table>
-              </div>
-            )
+          {/* Changes */}
+          {tab === 'changes' && (
+            <ChangesView events={changeEvents} source={changeEvents.some(e => e.source === 'api') ? 'mixed' : 'snapshot'} />
           )}
         </div>
       </div>
 
-      {/* ── Stacked sections: Placements · Bidding · Changes (always visible) ── */}
+      {/* ── Stacked sections: Placements · Bidding (Changes moved into a tab) ── */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
         <h2 className="text-sm font-semibold text-gray-700 mb-3">Placements</h2>
-        {!isSP ? <Empty msg="Placement bidding is a Sponsored Products feature." /> : (
+        {placements.length === 0 ? <Empty msg="No placement data for this campaign type." /> : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {placements.map(p => (
               <div key={p.key} className="border border-gray-100 rounded-xl p-4">
@@ -272,10 +306,36 @@ export default function CampaignDetailTabs({
         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">Changes <span className="font-normal text-gray-400">({changeEvents.length})</span></h2>
-        <ChangesView events={changeEvents} source={changeEvents.some(e => e.source === 'api') ? 'mixed' : 'snapshot'} />
-      </div>
+    </div>
+  )
+}
+
+function TermsTable({ terms }: { terms: STRow[] }) {
+  if (!terms.length) return <p className="text-xs text-gray-400 py-3">No search terms in range.</p>
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 overflow-auto max-h-72">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[9px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
+            <th className="px-3 py-1.5 font-medium">Term</th>
+            <th className="px-2 py-1.5 font-medium text-right">Spend</th>
+            <th className="px-2 py-1.5 font-medium text-right">Sales</th>
+            <th className="px-2 py-1.5 font-medium text-right">ACoS</th>
+            <th className="px-2 py-1.5 font-medium text-right">Orders</th>
+          </tr>
+        </thead>
+        <tbody>
+          {terms.map((s, i) => (
+            <tr key={i} className="border-b border-gray-50 last:border-0">
+              <td className="px-3 py-1.5 text-[11px] text-gray-700 max-w-[280px] truncate" title={s.term}>{s.term}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-[11px] text-gray-700">{s.spend_cents ? fmtD(s.spend_cents) : '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-[11px] text-gray-700">{s.sales_cents ? fmtD(s.sales_cents) : '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-[11px] text-gray-700">{acosOf(s)}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-[11px] text-gray-700">{s.orders || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

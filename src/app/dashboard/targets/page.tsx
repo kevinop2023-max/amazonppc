@@ -171,9 +171,11 @@ export default async function TargetsPage({
 
   // ── Change events → per-target bid events + per-campaign chips + placement series ──
   const bidEventsMap = new Map<string, ChangePt[]>()          // entity_id (keyword id)
-  const chipMap = new Map<string, ChangeChip[]>()             // `${AD}|${campaign_id}`
+  const chipMap = new Map<string, ChangeChip[]>()             // `${AD}|${campaign_id}` — budget/strategy only
   const placementEvents = new Map<string, ChangePt[]>()       // `${campaign_id}|${bucket}` (SP panel)
+  const placementChips = new Map<string, ChangeChip[]>()      // `${campaign_id}|${bucket}` — anchor chips
   const latestBidChip = new Map<string, ChangeChip>()         // entity_id → latest bid chip
+  const changeCount = new Map<string, number>()               // `${AD}|${campaign_id}` — all changes
 
   const adOfCampaign = (cid: string | null): 'SP' | 'SB' | null =>
     cid == null ? null : campMeta.has(`SP|${cid}`) ? 'SP' : campMeta.has(`SB|${cid}`) ? 'SB' : null
@@ -183,37 +185,43 @@ export default async function TargetsPage({
     if (!ad) continue
     if ((adType === 'sp' && ad === 'SB') || (adType === 'sb' && ad === 'SP')) continue
     const campKey = `${ad}|${e.campaign_id}`
-    let label: string | null = null
 
     if (e.field === 'BID_AMOUNT' && (e.entity_type === 'KEYWORD' || e.entity_type === 'PRODUCT_TARGETING')) {
+      // Bid changes anchor from each target row's "Last change" chip — not a campaign chip.
       const eid = String(e.entity_id)
       const arr = bidEventsMap.get(eid) ?? []
       arr.push({ ts: e.event_ts, old_value: e.old_value != null ? Number(e.old_value) : null, new_value: e.new_value != null ? Number(e.new_value) : null })
       bidEventsMap.set(eid, arr)
-      const text = kwMeta.get(`${ad}|${eid}`)?.text ?? ''
-      label = `Bid ${e.old_value != null ? fmtD(Number(e.old_value)) : '—'}→${e.new_value != null ? fmtD(Number(e.new_value)) : '—'}${text ? ` · ${text.slice(0, 24)}` : ''}`
-      latestBidChip.set(eid, { id: e.id, ts: e.event_ts, field: e.field, label })
+      latestBidChip.set(eid, { id: e.id, ts: e.event_ts, field: e.field, label: `Bid ${e.old_value != null ? fmtD(Number(e.old_value)) : '—'}→${e.new_value != null ? fmtD(Number(e.new_value)) : '—'}` })
+      changeCount.set(campKey, (changeCount.get(campKey) ?? 0) + 1)
     } else if (e.field === 'PLACEMENT_GROUP' || LEGACY_FIELD_BUCKET[e.field]) {
+      // Placement changes anchor from inside their placement card.
       const pos = e.field === 'PLACEMENT_GROUP' ? (e.metadata?.placementGroupPosition ?? null) : null
       const bucket = e.field === 'PLACEMENT_GROUP' ? (pos ? POS_BUCKET[pos] ?? null : null) : LEGACY_FIELD_BUCKET[e.field]
-      const posLabel = e.field === 'PLACEMENT_GROUP' ? (pos ? POS_LABEL[pos] ?? String(pos) : 'Placement') : POS_LABEL[Object.keys(POS_BUCKET).find(k => POS_BUCKET[k] === bucket) ?? ''] ?? 'Placement'
-      label = `${posLabel} ${e.old_value ?? '—'}%→${e.new_value ?? '—'}%`
       if (ad === 'SP' && bucket) {
         const pk = `${e.campaign_id}|${bucket}`
         const arr = placementEvents.get(pk) ?? []
         arr.push({ ts: e.event_ts, old_value: e.old_value != null ? Number(e.old_value) : null, new_value: e.new_value != null ? Number(e.new_value) : null })
         placementEvents.set(pk, arr)
+        const chips = placementChips.get(pk) ?? []
+        chips.push({ id: e.id, ts: e.event_ts, field: 'PLACEMENT_GROUP', label: `${fmtDate(e.event_ts)} · ${e.old_value ?? '—'}%→${e.new_value ?? '—'}%` })
+        placementChips.set(pk, chips)
+      } else {
+        // SB placement changes (positions TOP/OTHER/HOME) — no panel, keep as campaign chip
+        const posLabel = pos ? POS_LABEL[pos] ?? String(pos) : 'Placement'
+        const arr = chipMap.get(campKey) ?? []
+        arr.push({ id: e.id, ts: e.event_ts, field: 'PLACEMENT_GROUP', label: `${fmtDate(e.event_ts)} · ${posLabel} ${e.old_value ?? '—'}%→${e.new_value ?? '—'}%` })
+        chipMap.set(campKey, arr)
       }
-    } else if (e.field === 'SMART_BIDDING_STRATEGY') {
-      label = `Strategy ${e.old_text ?? '—'}→${e.new_text ?? '—'}`
-    } else if (e.field === 'BUDGET_AMOUNT') {
-      label = `Budget ${e.old_value != null ? fmtD(Number(e.old_value)) : '—'}→${e.new_value != null ? fmtD(Number(e.new_value)) : '—'}`
-    }
-
-    if (label) {
+      changeCount.set(campKey, (changeCount.get(campKey) ?? 0) + 1)
+    } else if (e.field === 'SMART_BIDDING_STRATEGY' || e.field === 'BUDGET_AMOUNT') {
+      const label = e.field === 'SMART_BIDDING_STRATEGY'
+        ? `Strategy ${e.old_text ?? '—'}→${e.new_text ?? '—'}`
+        : `Budget ${e.old_value != null ? fmtD(Number(e.old_value)) : '—'}→${e.new_value != null ? fmtD(Number(e.new_value)) : '—'}`
       const arr = chipMap.get(campKey) ?? []
       arr.push({ id: e.id, ts: e.event_ts, field: e.field, label: `${fmtDate(e.event_ts)} · ${label}` })
       chipMap.set(campKey, arr)
+      changeCount.set(campKey, (changeCount.get(campKey) ?? 0) + 1)
     }
   }
 
@@ -327,16 +335,17 @@ export default async function TargetsPage({
     ]).map(([key, label, pct]) => ({
       key, label, currentPct: pct,
       events: placementEvents.get(`${cid}|${key}`) ?? [],
+      chips: (placementChips.get(`${cid}|${key}`) ?? []).sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 8),
       ...(plAB.get(`${cid}|${key}`) ?? zeroAB()),
     })) : []
 
-    const chips = (chipMap.get(ck) ?? []).sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 24)
+    const chips = (chipMap.get(ck) ?? []).sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 12)
 
     groups.push({
       id: cid, name: meta.name, adType: ad, state: meta.state, budgetCents: meta.budgetCents,
       strategy: meta.strategy, placements, targets,
       unattributedTerms: un.slice(0, UNATTR_CAP), omittedUnattributed: Math.max(0, un.length - UNATTR_CAP),
-      changeChips: chips, ...ab,
+      changeChips: chips, changeCount: changeCount.get(ck) ?? 0, ...ab,
     })
   }
   groups.sort((x, y) => (y.aSpend + y.bSpend) - (x.aSpend + x.bSpend))

@@ -35,16 +35,14 @@ export function allTimeSplit(earliest: string) {
   }
 }
 
-// Change-impact anchor: B starts ON the change day, A = the N days immediately before.
-// N is symmetric, capped at 14 days and by data available since the change.
+// Change-impact anchor: B = from the change day THROUGH yesterday (full read since the
+// change), A = the same number of days immediately before the change.
 export function anchorWindows(eventTs: string, earliest: string | null) {
   const change = eventTs.slice(0, 10)
   const yesterday = clientDateStr(1)
-  const avail = Math.max(1, diffDays(change, yesterday) + 1)
-  const n = Math.min(14, avail)
+  const n = Math.max(1, diffDays(change, yesterday) + 1)
   const bStart = change
-  const bEndRaw = addDays(change, n - 1)
-  const bEnd = bEndRaw < yesterday ? bEndRaw : yesterday
+  const bEnd = change < yesterday ? yesterday : change
   const aEnd = addDays(change, -1)
   let aStart = addDays(change, -n)
   if (earliest && aStart < earliest) aStart = earliest

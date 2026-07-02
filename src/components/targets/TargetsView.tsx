@@ -57,7 +57,11 @@ export default function TargetsView({ profileId, aStart, aEnd, bStart, bEnd, adT
 
   const anchoredGroupId = useMemo(() => {
     if (!anchor) return null
-    for (const g of groups) if (g.changeChips.some(c => String(c.id) === anchor) || g.targets.some(t => t.latestChip && String(t.latestChip.id) === anchor)) return `${g.adType}|${g.id}`
+    for (const g of groups) if (
+      g.changeChips.some(c => String(c.id) === anchor) ||
+      g.placements.some(p => p.chips.some(c => String(c.id) === anchor)) ||
+      g.targets.some(t => t.latestChip && String(t.latestChip.id) === anchor)
+    ) return `${g.adType}|${g.id}`
     return null
   }, [anchor, groups])
 

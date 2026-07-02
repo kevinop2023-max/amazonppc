@@ -48,6 +48,7 @@ export type PlacementInfo = AB & {
   label: string
   currentPct: number | null
   events: ChangePt[]
+  chips: ChangeChip[]        // clickable anchors for this placement's multiplier changes
 }
 
 export type CampaignGroup = AB & {
@@ -61,7 +62,8 @@ export type CampaignGroup = AB & {
   targets: TargetItem[]
   unattributedTerms: TermItem[]
   omittedUnattributed: number
-  changeChips: ChangeChip[]
+  changeChips: ChangeChip[]   // budget/strategy + SB placement chips only (bid → target rows, SP placement → placement cards)
+  changeCount: number         // all changes recorded for this campaign
 }
 
 export type NegRow = {

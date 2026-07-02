@@ -227,16 +227,17 @@ export default function CampaignSection({ group: g, tab, anchor, defaultOpen, on
           <span className="text-[11px] text-gray-500 whitespace-nowrap">Sales {fmtD(g.aSales)}<span className="text-gray-300 mx-1">→</span><span className="font-semibold text-gray-800">{fmtD(g.bSales)}</span></span>
           <span className="text-[11px] whitespace-nowrap">ACoS <span className="text-gray-400">{aAcos === null ? '—' : aAcos.toFixed(1) + '%'}</span><span className="text-gray-300 mx-1">→</span><span className="font-semibold text-gray-800">{bAcos === null ? '—' : bAcos.toFixed(1) + '%'}</span> <DeltaBadge value={aAcos !== null && bAcos !== null ? bAcos - aAcos : null} unit="pp" lowerIsBetter /></span>
           <span className="text-[11px] text-gray-500 whitespace-nowrap">Orders {g.aOrders}<span className="text-gray-300 mx-1">→</span><span className="font-semibold text-gray-800">{g.bOrders}</span></span>
-          {g.changeChips.length > 0 && <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-100 px-1.5 py-0.5 rounded-full whitespace-nowrap">{g.changeChips.length} changes</span>}
+          {g.changeCount > 0 && <span className="text-[10px] font-semibold text-orange-600 bg-orange-50 border border-orange-100 px-1.5 py-0.5 rounded-full whitespace-nowrap">{g.changeCount} changes</span>}
         </span>
       </button>
 
       {open && (
         <div className="border-t border-gray-100">
-          {/* Change chips */}
+          {/* Campaign-level chips: budget / strategy / SB placement changes only.
+              Bid changes anchor from each target row; SP placement changes from their placement card. */}
           {g.changeChips.length > 0 && (
             <div className="px-4 py-2.5 bg-gray-50/50 border-b border-gray-100 flex flex-wrap gap-1.5 items-center">
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mr-1">Changes — click one to compare before → after</span>
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mr-1">Campaign changes — click to compare before → after</span>
               {g.changeChips.map(c => (
                 <ChipButton key={c.id} chip={c} anchored={anchor === String(c.id)} onAnchor={onAnchor} />
               ))}
@@ -263,9 +264,16 @@ export default function CampaignSection({ group: g, tab, anchor, defaultOpen, on
                         <span className="text-gray-400">ACoS</span><span>{pa === null ? '—' : pa.toFixed(1) + '%'} <span className="text-gray-300">→</span> <b>{pb === null ? '—' : pb.toFixed(1) + '%'}</b> <DeltaBadge value={pa !== null && pb !== null ? pb - pa : null} unit="pp" lowerIsBetter /></span>
                         <span className="text-gray-400">Orders</span><span>{p.aOrders} <span className="text-gray-300">→</span> <b>{p.bOrders}</b></span>
                       </div>
-                      {p.events.length > 0 && (
+                      {p.chips.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {p.chips.map(c => (
+                            <ChipButton key={c.id} chip={c} anchored={anchor === String(c.id)} onAnchor={onAnchor} />
+                          ))}
+                        </div>
+                      )}
+                      {p.events.length > 1 && (
                         <button onClick={() => setExpandedPlacement(expanded ? null : p.key)} className="mt-2 text-[10px] font-medium text-teal-600 hover:text-teal-800">
-                          {expanded ? '▾ hide' : '▸ show'} multiplier history ({p.events.length})
+                          {expanded ? '▾ hide' : '▸ show'} multiplier history
                         </button>
                       )}
                       {expanded && <div className="mt-1"><ChangeHistoryChart events={p.events} kind="percent" color="#0d9488" height={100} /></div>}
@@ -361,7 +369,7 @@ function TargetRowGroup({ t, expanded, cols, showTopIs, anchor, onAnchor, onTogg
         <td className="px-2 py-2"><ABCell a={t.aClicks} b={t.bClicks} /></td>
         <td className="px-2 py-2" onClick={e => e.stopPropagation()}>
           {t.latestChip
-            ? <ChipButton chip={{ ...t.latestChip, label: `${fmtDate(t.latestChip.ts)} · ${t.latestChip.label.split(' · ').slice(-2, -1)[0] ?? t.latestChip.label}` }} anchored={anchor === String(t.latestChip.id)} onAnchor={onAnchor} />
+            ? <ChipButton chip={{ ...t.latestChip, label: `${fmtDate(t.latestChip.ts)} · ${t.latestChip.label}` }} anchored={anchor === String(t.latestChip.id)} onAnchor={onAnchor} />
             : <span className="text-[10px] text-gray-300">—</span>}
         </td>
       </tr>

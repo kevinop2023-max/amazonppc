@@ -402,10 +402,12 @@ async function syncChangeHistory(token: string, pid: string, db: any, numericPid
   // (request latency pushes an exact -90d value over the edge). Stay 1 hour inside.
   const MAX_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000
 
-  // Incremental window: from latest stored event (minus 1-day overlap), else 90-day backfill.
+  // Incremental window: from latest stored API event (minus 1-day overlap), else 90-day backfill.
+  // Scope to source='api' — otherwise recent snapshot-diff rows would shrink the window and skip
+  // the initial 90-day API backfill on the first real run.
   let fromMs = now - MAX_LOOKBACK_MS
   const { data: latest } = await db.from('change_events')
-    .select('event_ts').eq('profile_id', numericPid)
+    .select('event_ts').eq('profile_id', numericPid).eq('source', 'api')
     .order('event_ts', { ascending: false }).limit(1).maybeSingle()
   if (latest?.event_ts) {
     fromMs = Math.max(fromMs, new Date(latest.event_ts).getTime() - 24 * 60 * 60 * 1000)
@@ -413,13 +415,17 @@ async function syncChangeHistory(token: string, pid: string, db: any, numericPid
   const toMs = now
 
   // Request filters use the request-side enum (DEFAULT_BID_AMOUNT is requested as BID_AMOUNT for AD_GROUP).
+  // `parents` is REQUIRED — without it /history silently returns 200/totalRecords:0 (confirmed w/ Amazon
+  // Support 2026-07-01: adding parents unblocked it → 3752 records). useProfileIdAdvertiser scopes the
+  // query to every entity under the authenticated advertiser (the whole profile).
+  const PARENTS = [{ useProfileIdAdvertiser: true }]
   const eventTypes: Record<string, any> = {
-    CAMPAIGN:          { filters: ['STATUS', 'IN_BUDGET', 'BUDGET_AMOUNT', 'NAME', 'START_DATE', 'END_DATE', 'SMART_BIDDING_STRATEGY', 'PLACEMENT_GROUP'] },
-    AD_GROUP:          { filters: ['STATUS', 'NAME', 'BID_AMOUNT'] },
-    KEYWORD:           { filters: ['STATUS', 'BID_AMOUNT'] },
-    PRODUCT_TARGETING: { filters: ['STATUS', 'BID_AMOUNT'] },
-    NEGATIVE_KEYWORD:  { filters: ['STATUS'] },
-    AD:                { filters: ['STATUS'] },
+    CAMPAIGN:          { filters: ['STATUS', 'IN_BUDGET', 'BUDGET_AMOUNT', 'NAME', 'START_DATE', 'END_DATE', 'SMART_BIDDING_STRATEGY', 'PLACEMENT_GROUP'], parents: PARENTS },
+    AD_GROUP:          { filters: ['STATUS', 'NAME', 'BID_AMOUNT'], parents: PARENTS },
+    KEYWORD:           { filters: ['STATUS', 'BID_AMOUNT'], parents: PARENTS },
+    PRODUCT_TARGETING: { filters: ['STATUS', 'BID_AMOUNT'], parents: PARENTS },
+    NEGATIVE_KEYWORD:  { filters: ['STATUS'], parents: PARENTS },
+    AD:                { filters: ['STATUS'], parents: PARENTS },
   }
 
   const h: Record<string, string> = {
@@ -431,13 +437,15 @@ async function syncChangeHistory(token: string, pid: string, db: any, numericPid
   }
 
   const all: any[] = []
-  let nextToken: string | null = null
   let firstDiag: any = null
   const RETRY_WAITS = [5000, 15000, 30000]   // 429 backoff
+  // /history paginates by pageOffset (NOT nextToken — docs were wrong). Real response shape:
+  // { events, pageSize, pageOffset, maxPageNumber, totalRecords }. pageOffset is a 0-based page
+  // index; loop until we reach maxPageNumber (read from page 0). 200-page cap is a safety stop.
+  let maxPageNumber = 0
   pages:
-  for (let page = 0; page < 200; page++) {
-    const body: any = { eventTypes, fromDate: fromMs, toDate: toMs, count: 200, sort: { direction: 'ASC', key: 'DATE' } }
-    if (nextToken) body.nextToken = nextToken
+  for (let pageOffset = 0; pageOffset <= maxPageNumber && pageOffset < 200; pageOffset++) {
+    const body: any = { eventTypes, fromDate: fromMs, toDate: toMs, count: 200, pageOffset, sort: { direction: 'ASC', key: 'DATE' } }
 
     let res: Response | null = null
     let lastErrText = ''
@@ -447,21 +455,27 @@ async function syncChangeHistory(token: string, pid: string, db: any, numericPid
       lastErrText = await res.text().catch(() => '')
       const wait = RETRY_WAITS[attempt]
       if (wait == null) break   // out of retries
-      console.log(`[sync] history page ${page} throttled (attempt ${attempt + 1}), retry in ${wait / 1000}s`)
+      console.log(`[sync] history page ${pageOffset} throttled (attempt ${attempt + 1}), retry in ${wait / 1000}s`)
       await new Promise(r => setTimeout(r, wait))
     }
+    // Amazon's support team requires the request id (x-amzn-RequestId / x-amz-request-id)
+    // to investigate empty-200 responses. Capture it on every page.
+    const reqId = res?.headers.get('x-amzn-RequestId') ?? res?.headers.get('x-amz-request-id') ?? null
     if (!res || !res.ok) {
       const t = res ? (res.status === 429 ? lastErrText : await res.text().catch(() => '')) : ''
-      console.log(`[sync] history page ${page}: HTTP ${res?.status} ${t.slice(0, 300)}`)
-      if (page === 0) firstDiag = { status: res?.status ?? 0, error: t.slice(0, 800) }
+      console.log(`[sync] history page ${pageOffset}: HTTP ${res?.status} requestId=${reqId} ${t.slice(0, 300)}`)
+      if (pageOffset === 0) firstDiag = { status: res?.status ?? 0, requestId: reqId, error: t.slice(0, 800) }
       break pages
     }
     const data = await res.json()
     const events: any[] = data.events ?? []
-    if (page === 0) firstDiag = { status: 200, count: events.length, totalResults: data.totalResults ?? null, sampleEvent: events[0] ?? null }
+    if (pageOffset === 0) {
+      maxPageNumber = data.maxPageNumber ?? 0
+      // totalRecords is the real field (D-017); totalResults kept as fallback for older response shapes.
+      firstDiag = { status: 200, requestId: reqId, count: events.length, totalRecords: data.totalRecords ?? data.totalResults ?? null, maxPageNumber, sampleEvent: events[0] ?? null }
+    }
     all.push(...events)
-    nextToken = data.nextToken ?? null
-    if (!nextToken || !events.length) break
+    if (!events.length) break
   }
 
   // Diagnostics to logs only (no sync_logs row — keeps Sync History UI clean).

@@ -58,7 +58,7 @@ export type CampaignGroup = AB & {
   state: string
   budgetCents: number
   strategy: string | null
-  placements: PlacementInfo[]        // SP only; [] for SB
+  placements: PlacementInfo[]        // SP: top/product/rest; SB: top/rest (cards with no data dropped)
   targets: TargetItem[]
   unattributedTerms: TermItem[]
   omittedUnattributed: number

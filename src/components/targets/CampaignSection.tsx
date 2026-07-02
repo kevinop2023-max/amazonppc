@@ -245,11 +245,11 @@ export default function CampaignSection({ group: g, tab, anchor, defaultOpen, on
             </div>
           )}
 
-          {/* Placements (SP only) */}
-          {g.adType === 'SP' && g.placements.length > 0 && (
+          {/* Placements — SP has 3 groups; SB has Top of search + Rest of search (sbCampaignPlacement report) */}
+          {g.placements.length > 0 && (
             <div className="px-4 py-3 border-b border-gray-100">
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Placements — multiplier & A/B performance</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Placements — adjustment & A/B performance</p>
+              <div className={`grid grid-cols-1 gap-3 ${g.placements.length >= 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
                 {g.placements.map(p => {
                   const pa = acosPct(p.aSpend, p.aSales), pb = acosPct(p.bSpend, p.bSales)
                   const expanded = expandedPlacement === p.key
@@ -283,9 +283,6 @@ export default function CampaignSection({ group: g, tab, anchor, defaultOpen, on
                 })}
               </div>
             </div>
-          )}
-          {g.adType === 'SB' && (
-            <p className="px-4 py-2 text-[10px] text-gray-400 border-b border-gray-100">Placement performance breakdown is available for SP campaigns only (Amazon does not report it for SB). SB placement multiplier changes still appear as chips above.</p>
           )}
 
           {/* Targets table */}

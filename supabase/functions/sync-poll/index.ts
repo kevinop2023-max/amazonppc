@@ -165,13 +165,14 @@ async function upsertAdGroupPerf(db: any, pid: number, rows: any[]) {
   return r.length
 }
 
-// Placement performance (spCampaigns groupBy campaignPlacement).
+// Placement performance (spCampaigns / sbCampaignPlacement, groupBy campaignPlacement).
+// Handles both SP metric names (sales14d/purchases14d/unitsSoldClicks14d) and SB (sales/purchases/unitsSold).
 async function upsertPlacementPerf(db: any, pid: number, rows: any[]) {
   if (!rows.length) return 0
   const r = rows.filter(x => x.campaignId && x.placementClassification).map(x => ({
     profile_id: pid, campaign_id: n(x.campaignId), date: x.date, placement: x.placementClassification,
     impressions: n(x.impressions), clicks: n(x.clicks), spend_cents: toCents(x.cost),
-    sales_cents: toCents(x.sales14d), orders: n(x.purchases14d), units: n(x.unitsSoldClicks14d),
+    sales_cents: toCents(x.sales14d ?? x.sales), orders: n(x.purchases14d ?? x.purchases), units: n(x.unitsSoldClicks14d ?? x.unitsSold),
   }))
   if (!r.length) return 0
   const { error } = await db.from('placement_performance').upsert(r, { onConflict: 'profile_id,campaign_id,date,placement' })
@@ -658,7 +659,7 @@ Deno.serve(async (req) => {
     // Check all report statuses in parallel (single round, no loop)
     // SB sub-reports (sbAttr, sbKw, sbSt) are optional — Amazon throttles them independently.
     // Missing any of these doesn't warrant 'partial'; prior data stays intact via upsert.
-    const OPTIONAL_REPORTS = ['sbAttr', 'sbKw', 'sbSt', 'spAg', 'spPlace']
+    const OPTIONAL_REPORTS = ['sbAttr', 'sbKw', 'sbSt', 'spAg', 'spPlace', 'sbPlace']
     for (const name of OPTIONAL_REPORTS) {
       if (!ids[name]) console.log(`[poll] ${name} skipped (Amazon throttle) — prior data preserved`)
     }
@@ -708,7 +709,7 @@ Deno.serve(async (req) => {
     // All done — download and upsert
     console.log(`[poll] All reports ready. Downloading ${completed.length} reports...`)
 
-    const nameMap: Record<string, string> = { spCamp: 'SP Campaigns', spKw: 'SP Keywords', spSt: 'SP Terms', sbCamp: 'SB Campaigns', sbKw: 'SB Keywords', sbSt: 'SB Terms', sbAttr: 'SB Attr Purchases', sdCamp: 'SD Campaigns', spAg: 'SP Ad Groups', spPlace: 'SP Placements' }
+    const nameMap: Record<string, string> = { spCamp: 'SP Campaigns', spKw: 'SP Keywords', spSt: 'SP Terms', sbCamp: 'SB Campaigns', sbKw: 'SB Keywords', sbSt: 'SB Terms', sbAttr: 'SB Attr Purchases', sdCamp: 'SD Campaigns', spAg: 'SP Ad Groups', spPlace: 'SP Placements', sbPlace: 'SB Placements' }
     const dataMap: Record<string, any[]> = {}
 
     await Promise.all(
@@ -757,7 +758,8 @@ Deno.serve(async (req) => {
     const sdCampN = await upsertSdCampaigns(db,  pid, dataMap['sdCamp'] ?? []); sdTotal += sdCampN
     const spAgN    = await upsertAdGroupPerf(db,   pid, dataMap['spAg']    ?? []); spTotal += spAgN
     const spPlaceN = await upsertPlacementPerf(db, pid, dataMap['spPlace'] ?? []); spTotal += spPlaceN
-    console.log(`[poll] upserted perf — spAg:${spAgN} spPlace:${spPlaceN}`)
+    const sbPlaceN = await upsertPlacementPerf(db, pid, dataMap['sbPlace'] ?? []); sbTotal += sbPlaceN
+    console.log(`[poll] upserted perf — spAg:${spAgN} spPlace:${spPlaceN} sbPlace:${sbPlaceN}`)
 
     const total = spTotal + sbTotal + sdTotal
     console.log(`[poll] upserted — spCamp:${spCampN} spKw:${spKwN} spSt:${spStN} sbCamp:${sbCampN} sbKw:${sbKwN} sbSt:${sbStN} sbAttr:${sbAttrN} sdCamp:${sdCampN}`)

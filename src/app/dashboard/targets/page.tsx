@@ -20,9 +20,11 @@ const POS_LABEL: Record<string, string> = {
   TOP: 'Top of search', REST_OF_SEARCH: 'Rest of search', DETAIL_PAGE: 'Product pages',
   PRODUCT_PAGE: 'Product pages', PRODUCT_PAGES: 'Product pages', HOME: 'Home', OTHER: 'Other placements',
 }
-// Position → SP placements-panel bucket (SB-only positions return null).
+// Position → placements-panel bucket. SP positions: TOP / REST_OF_SEARCH / DETAIL_PAGE.
+// SB positions: TOP / OTHER (= console "Rest of search") / HOME — verified against console.
 const POS_BUCKET: Record<string, 'top' | 'product' | 'rest'> = {
   TOP: 'top', DETAIL_PAGE: 'product', PRODUCT_PAGE: 'product', PRODUCT_PAGES: 'product', REST_OF_SEARCH: 'rest',
+  OTHER: 'rest', HOME: 'rest',
 }
 // Legacy snapshot-era field names map straight to buckets.
 const LEGACY_FIELD_BUCKET: Record<string, 'top' | 'product' | 'rest'> = {
@@ -91,8 +93,9 @@ export default async function TargetsPage({
     wantSp ? win('sp_search_terms', ST_COLS, bStart, bEnd) : empty,
     wantSb ? win('sb_search_terms', ST_COLS, aStart, aEnd) : empty,
     wantSb ? win('sb_search_terms', ST_COLS, bStart, bEnd) : empty,
-    wantSp ? win('placement_performance', PL_COLS, aStart, aEnd) : empty,
-    wantSp ? win('placement_performance', PL_COLS, bStart, bEnd) : empty,
+    // placement_performance holds SP (spCampaigns/campaignPlacement) AND SB (sbCampaignPlacement) rows
+    win('placement_performance', PL_COLS, aStart, aEnd),
+    win('placement_performance', PL_COLS, bStart, bEnd),
     wantSp ? supabase.from('sp_keywords').select('keyword_id, campaign_id, keyword_text, match_type, state, bid_cents, top_of_search_is').eq('profile_id', profileId).order('date', { ascending: false }).range(0, 49999) : empty,
     wantSb ? supabase.from('sb_keywords').select('keyword_id, campaign_id, keyword_text, match_type, state, bid_cents, top_of_search_is').eq('profile_id', profileId).order('date', { ascending: false }).range(0, 49999) : empty,
     supabase.from('sp_campaigns').select('campaign_id, campaign_name, state, daily_budget_cents, bidding_strategy, placement_top_pct, placement_product_pct, placement_rest_pct').eq('profile_id', profileId).order('date', { ascending: false }).range(0, 49999),
@@ -177,6 +180,7 @@ export default async function TargetsPage({
   const latestBidChip = new Map<string, ChangeChip>()         // entity_id → latest bid chip
   const changeCount = new Map<string, number>()               // `${AD}|${campaign_id}` — all changes
   const inBudgetNow = new Map<string, boolean>()              // `${AD}|${campaign_id}` — latest IN_BUDGET state
+  const sbPlacementPct = new Map<string, number>()            // `${campaign_id}|${bucket}` — SB current adjustment %
 
   const adOfCampaign = (cid: string | null): 'SP' | 'SB' | null =>
     cid == null ? null : campMeta.has(`SP|${cid}`) ? 'SP' : campMeta.has(`SB|${cid}`) ? 'SB' : null
@@ -196,10 +200,10 @@ export default async function TargetsPage({
       latestBidChip.set(eid, { id: e.id, ts: e.event_ts, field: e.field, label: `Bid ${e.old_value != null ? fmtD(Number(e.old_value)) : '—'}→${e.new_value != null ? fmtD(Number(e.new_value)) : '—'}` })
       changeCount.set(campKey, (changeCount.get(campKey) ?? 0) + 1)
     } else if (e.field === 'PLACEMENT_GROUP' || LEGACY_FIELD_BUCKET[e.field]) {
-      // Placement changes anchor from inside their placement card.
+      // Placement changes anchor from inside their placement card (SP and SB).
       const pos = e.field === 'PLACEMENT_GROUP' ? (e.metadata?.placementGroupPosition ?? null) : null
       const bucket = e.field === 'PLACEMENT_GROUP' ? (pos ? POS_BUCKET[pos] ?? null : null) : LEGACY_FIELD_BUCKET[e.field]
-      if (ad === 'SP' && bucket) {
+      if (bucket) {
         const pk = `${e.campaign_id}|${bucket}`
         const arr = placementEvents.get(pk) ?? []
         arr.push({ ts: e.event_ts, old_value: e.old_value != null ? Number(e.old_value) : null, new_value: e.new_value != null ? Number(e.new_value) : null })
@@ -207,8 +211,10 @@ export default async function TargetsPage({
         const chips = placementChips.get(pk) ?? []
         chips.push({ id: e.id, ts: e.event_ts, field: 'PLACEMENT_GROUP', label: `${fmtDate(e.event_ts)} · ${e.old_value ?? '—'}%→${e.new_value ?? '—'}%` })
         placementChips.set(pk, chips)
+        // SB event values are multiplier-form (110 = +10% adjustment; SP stores adjustment directly).
+        // Events are ts-ascending → last write per bucket = current SB adjustment.
+        if (ad === 'SB' && e.new_value != null) sbPlacementPct.set(pk, Number(e.new_value) - 100)
       } else {
-        // SB placement changes (positions TOP/OTHER/HOME) — no panel, keep as campaign chip
         const posLabel = pos ? POS_LABEL[pos] ?? String(pos) : 'Placement'
         const arr = chipMap.get(campKey) ?? []
         arr.push({ id: e.id, ts: e.event_ts, field: 'PLACEMENT_GROUP', label: `${fmtDate(e.event_ts)} · ${posLabel} ${e.old_value ?? '—'}%→${e.new_value ?? '—'}%` })
@@ -236,8 +242,8 @@ export default async function TargetsPage({
     return t.includes('top') ? 'top' : (t.includes('detail') || t.includes('product')) ? 'product' : 'rest'
   }
   const plAB = new Map<string, AB>()  // `${campaign_id}|${bucket}`
-  for (const r of plA.data ?? []) accumulate(plAB, `${r.campaign_id}|${placeBucket(r.placement)}`, 'a', r)
-  for (const r of plB.data ?? []) accumulate(plAB, `${r.campaign_id}|${placeBucket(r.placement)}`, 'b', r)
+  for (const r of (plA.data as any[]) ?? []) accumulate(plAB, `${r.campaign_id}|${placeBucket(r.placement)}`, 'a', r)
+  for (const r of (plB.data as any[]) ?? []) accumulate(plAB, `${r.campaign_id}|${placeBucket(r.placement)}`, 'b', r)
 
   // ── Search terms: A/B per (adType, campaign, term) + triggering-target attribution ──
   type TermAgg = AB & { term: string; matchType: string | null; targeting: string | null; keywordId: string | null; kwSpend: number; campaignId: string; adType: 'SP' | 'SB'; placeholder: boolean }
@@ -333,16 +339,20 @@ export default async function TargetsPage({
     const un = (unattributed.get(ck) ?? []).sort((x, y) => y.bSales - x.bSales || y.bSpend - x.bSpend)
     if (!targets.length && !un.length) continue
 
-    const placements: PlacementInfo[] = ad === 'SP' ? ([
-      ['top', 'Top of search', meta.top] as const,
-      ['product', 'Product pages', meta.product] as const,
-      ['rest', 'Rest of search', meta.rest] as const,
-    ]).map(([key, label, pct]) => ({
+    // SP: all 3 placement groups, current % from sp_campaigns config columns.
+    // SB: same 3 classifications (probed sbCampaignPlacement: Top of Search / Detail Page / Other
+    //     on-Amazon; event position OTHER = console "Rest of search"). Current % derived from the
+    //     latest PLACEMENT_GROUP event. SB cards with no data at all are dropped.
+    const placementDefs: Array<readonly ['top' | 'product' | 'rest', string, number | null]> = ad === 'SP'
+      ? [['top', 'Top of search', meta.top], ['product', 'Product pages', meta.product], ['rest', 'Rest of search', meta.rest]]
+      : [['top', 'Top of search', sbPlacementPct.get(`${cid}|top`) ?? null], ['product', 'Detail page', sbPlacementPct.get(`${cid}|product`) ?? null], ['rest', 'Rest of search', sbPlacementPct.get(`${cid}|rest`) ?? null]]
+    let placements: PlacementInfo[] = placementDefs.map(([key, label, pct]) => ({
       key, label, currentPct: pct,
       events: placementEvents.get(`${cid}|${key}`) ?? [],
       chips: (placementChips.get(`${cid}|${key}`) ?? []).sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 8),
       ...(plAB.get(`${cid}|${key}`) ?? zeroAB()),
-    })) : []
+    }))
+    if (ad === 'SB') placements = placements.filter(p => p.events.length || p.currentPct != null || p.aSpend + p.bSpend + p.aImp + p.bImp > 0)
 
     const chips = (chipMap.get(ck) ?? []).sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 12)
 

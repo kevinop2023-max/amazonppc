@@ -597,6 +597,9 @@ Deno.serve(async (req) => {
     const SB_ST   = ['date','campaignId','adGroupId','searchTerm','matchType','keywordId','impressions','clicks','cost','purchases','sales','unitsSold']
     // sbPurchasedProduct: separate report for SB sales (groupBy purchasedAsin is the ONLY allowed value)
     const SB_ATTR = ['date','campaignId','sales14d','orders14d']
+    // SB placement perf (sbCampaignPlacement, groupBy campaignPlacement) — probed 2026-07-02, accepted.
+    // SB uses click-attributed sales/purchases/unitsSold (no 14d suffix).
+    const SB_PLACE = ['date','campaignId','placementClassification','impressions','clicks','cost','purchases','sales','unitsSold']
     // SD campaign report — purchases14d/sales14d not supported; spend/traffic only
     const SD_CAMP = ['date','campaignId','campaignName','campaignStatus','campaignBudgetAmount','impressions','clicks','cost']
 
@@ -685,12 +688,14 @@ Deno.serve(async (req) => {
       const spAg    = await createReport(token, pid, 'SP Ad Groups', 'SPONSORED_PRODUCTS', 'spCampaigns', ['adGroup'],           SP_AG,    startDate, endDate, undefined, 0)
       await new Promise(r => setTimeout(r, 3000))
       const spPlace = await createReport(token, pid, 'SP Placements','SPONSORED_PRODUCTS', 'spCampaigns', ['campaignPlacement'], SP_PLACE, startDate, endDate, undefined, 0)
+      await new Promise(r => setTimeout(r, 3000))
+      const sbPlace = await createReport(token, pid, 'SB Placements','SPONSORED_BRANDS', 'sbCampaignPlacement', ['campaignPlacement'], SB_PLACE, startDate, endDate, undefined, 0)
 
       // Patch in the SB/SD report IDs and flip to 'reports_pending' — pg_cron can now pick this up.
       if (log?.id) {
         await db.from('sync_logs').update({
           status: 'reports_pending',
-          report_ids: { spCamp, spKw, spSt, spAg, spPlace, sbCamp, sbKw, sbSt, sbAttr, sdCamp, startDate, endDate },
+          report_ids: { spCamp, spKw, spSt, spAg, spPlace, sbPlace, sbCamp, sbKw, sbSt, sbAttr, sdCamp, startDate, endDate },
         }).eq('id', log.id)
       }
     }

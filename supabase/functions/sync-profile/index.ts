@@ -524,7 +524,8 @@ Deno.serve(async (req) => {
         syncCampaignStates(tk, String(prof.profile_id), db, prof.profile_id).catch(e => console.log(`[sync] states (history_only): ${e}`)),
         syncChangeHistory(tk, String(prof.profile_id), db, prof.profile_id).catch(e => console.log(`[sync] history (history_only): ${e}`)),
       ])
-      try { await db.rpc('diff_snapshots_to_change_events', { p_profile: prof.profile_id }) } catch (e) { console.log(`[sync] diff (history_only): ${e}`) }
+      // RETIRED 2026-07-02: snapshot-diff — Change History API is now the sole source (see sync-poll note).
+      // try { await db.rpc('diff_snapshots_to_change_events', { p_profile: prof.profile_id }) } catch (e) { console.log(`[sync] diff (history_only): ${e}`) }
       return new Response(JSON.stringify({ success: true, mode: 'history_only' }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
     }
 

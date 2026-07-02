@@ -772,13 +772,14 @@ Deno.serve(async (req) => {
 
     await generateAlerts(db, pid)
 
-    // Snapshot-diff fresh data into change_events (bid/budget/status history).
-    // Idempotent (ON CONFLICT DO NOTHING); non-fatal. Hybrid fallback while the
-    // Amazon Change History API (POST /history) is not yet entitled — see D-017.
-    try {
-      const { error: diffErr } = await db.rpc('diff_snapshots_to_change_events', { p_profile: pid })
-      if (diffErr) console.log(`[poll] change-events diff: ${diffErr.message}`)
-    } catch (e) { console.log(`[poll] change-events diff skipped: ${e}`) }
+    // RETIRED 2026-07-02: snapshot-diff into change_events. The Change History API
+    // (POST /history, D-017) now works and is the sole source — snapshot-diff produced
+    // sync-window-artifact dates and its rows were deleted (except 2 pre-API-window
+    // status rows). Re-enable only if the API breaks. pg_cron job 6 also unscheduled.
+    // try {
+    //   const { error: diffErr } = await db.rpc('diff_snapshots_to_change_events', { p_profile: pid })
+    //   if (diffErr) console.log(`[poll] change-events diff: ${diffErr.message}`)
+    // } catch (e) { console.log(`[poll] change-events diff skipped: ${e}`) }
 
     console.log(`[poll] Done — ${total} records upserted`)
     return new Response(JSON.stringify({ status: 'success', records_upserted: total }), {

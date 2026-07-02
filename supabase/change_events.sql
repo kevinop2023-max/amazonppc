@@ -1,11 +1,15 @@
 -- ============================================================================
 -- change_events — unified change-history log (Redesign v2)
 -- Sources:
---   'api'      = Amazon Change History API (POST /history) — built + deployed in
---                sync-profile.syncChangeHistory(), but account NOT yet entitled
---                (returns 200/totalRecords:0). See brain/decisions D-017.
---   'snapshot' = snapshot-diff fallback (diff_snapshots_to_change_events) — LIVE.
---                Runs after every sync (sync-poll) + daily cron 07:00 UTC.
+--   'api'      = Amazon Change History API (POST /history) — ACTIVE, sole source
+--                since 2026-07-01 (fix: request needs parents:[{useProfileIdAdvertiser:true}]).
+--                Ingested by sync-profile.syncChangeHistory(). See D-017.
+--   'snapshot' = snapshot-diff fallback — RETIRED 2026-07-02. Its dates were
+--                sync-window artifacts; rows deleted except 3 pre-API-window events
+--                (Mar 2026, older than the API's hard 90-day lookback). Cron job 6
+--                unscheduled; sync-poll/sync-profile calls commented out. The
+--                diff_snapshots_to_change_events() function below is kept in the DB
+--                unused — re-enable only if the API breaks.
 -- IDs are TEXT (Change History API may return alphanumeric IDs).
 --
 -- Captured fields (snapshot source):

@@ -100,7 +100,7 @@ export default async function TargetsPage({
     supabase.from('keyword_bid_history').select('keyword_id, ad_type, bid_cents, recorded_date').eq('profile_id', profileId).order('recorded_date', { ascending: true }).range(0, 49999),
     supabase.from('change_events').select('id, entity_type, entity_id, campaign_id, field, old_value, new_value, old_text, new_text, event_ts, metadata')
       .eq('profile_id', profileId)
-      .in('field', ['BID_AMOUNT', 'PLACEMENT_GROUP', 'PLACEMENT_TOP', 'PLACEMENT_PRODUCT_PAGE', 'PLACEMENT_REST_OF_SEARCH', 'SMART_BIDDING_STRATEGY', 'BUDGET_AMOUNT'])
+      .in('field', ['BID_AMOUNT', 'PLACEMENT_GROUP', 'PLACEMENT_TOP', 'PLACEMENT_PRODUCT_PAGE', 'PLACEMENT_REST_OF_SEARCH', 'SMART_BIDDING_STRATEGY', 'BUDGET_AMOUNT', 'IN_BUDGET'])
       .order('event_ts', { ascending: true }).range(0, 49999),
     wantSp ? supabase.from('sp_negative_keywords').select('keyword_id, campaign_id, campaign_name, ad_group_id, keyword_text, match_type, state').eq('profile_id', profileId).range(0, 9999) : empty,
     wantSp ? supabase.from('sp_negative_targets').select('target_id, campaign_id, campaign_name, ad_group_id, expression, state').eq('profile_id', profileId).range(0, 9999) : empty,
@@ -176,6 +176,7 @@ export default async function TargetsPage({
   const placementChips = new Map<string, ChangeChip[]>()      // `${campaign_id}|${bucket}` — anchor chips
   const latestBidChip = new Map<string, ChangeChip>()         // entity_id → latest bid chip
   const changeCount = new Map<string, number>()               // `${AD}|${campaign_id}` — all changes
+  const inBudgetNow = new Map<string, boolean>()              // `${AD}|${campaign_id}` — latest IN_BUDGET state
 
   const adOfCampaign = (cid: string | null): 'SP' | 'SB' | null =>
     cid == null ? null : campMeta.has(`SP|${cid}`) ? 'SP' : campMeta.has(`SB|${cid}`) ? 'SB' : null
@@ -214,6 +215,10 @@ export default async function TargetsPage({
         chipMap.set(campKey, arr)
       }
       changeCount.set(campKey, (changeCount.get(campKey) ?? 0) + 1)
+    } else if (e.field === 'IN_BUDGET') {
+      // Automatic budget-exhaustion flips (not user edits): events are ts-ascending, so the
+      // last one seen per campaign = current state. No chip, not counted as a change.
+      inBudgetNow.set(campKey, e.new_text !== 'false')
     } else if (e.field === 'SMART_BIDDING_STRATEGY' || e.field === 'BUDGET_AMOUNT') {
       const label = e.field === 'SMART_BIDDING_STRATEGY'
         ? `Strategy ${e.old_text ?? '—'}→${e.new_text ?? '—'}`
@@ -345,7 +350,8 @@ export default async function TargetsPage({
       id: cid, name: meta.name, adType: ad, state: meta.state, budgetCents: meta.budgetCents,
       strategy: meta.strategy, placements, targets,
       unattributedTerms: un.slice(0, UNATTR_CAP), omittedUnattributed: Math.max(0, un.length - UNATTR_CAP),
-      changeChips: chips, changeCount: changeCount.get(ck) ?? 0, ...ab,
+      changeChips: chips, changeCount: changeCount.get(ck) ?? 0,
+      outOfBudget: inBudgetNow.get(ck) === false, ...ab,
     })
   }
   groups.sort((x, y) => (y.aSpend + y.bSpend) - (x.aSpend + x.bSpend))

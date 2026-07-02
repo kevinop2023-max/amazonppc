@@ -64,6 +64,7 @@ export type CampaignGroup = AB & {
   omittedUnattributed: number
   changeChips: ChangeChip[]   // budget/strategy + SB placement chips only (bid → target rows, SP placement → placement cards)
   changeCount: number         // all changes recorded for this campaign
+  outOfBudget: boolean        // latest IN_BUDGET event says the campaign is currently out of budget
 }
 
 export type NegRow = {

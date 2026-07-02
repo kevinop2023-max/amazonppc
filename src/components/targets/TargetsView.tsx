@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { CampaignGroup, NegRow, ChangeChip } from './types'
 import { quickSplit, allTimeSplit, anchorWindows, fmtDate } from './ab'
@@ -25,22 +25,25 @@ const TABS = [
   { key: 'negatives', label: 'Negatives' },
 ]
 
-export default function TargetsView({ profileId, aStart, aEnd, bStart, bEnd, adType, tab, anchor, earliestDate, groups, negGroups, tabCounts }: Props) {
+export default function TargetsView({ profileId, aStart, aEnd, bStart, bEnd, adType, tab: initialTab, anchor, earliestDate, groups, negGroups, tabCounts }: Props) {
   const router = useRouter()
   const [dA1, setDA1] = useState(aStart); const [dA2, setDA2] = useState(aEnd)
   const [dB1, setDB1] = useState(bStart); const [dB2, setDB2] = useState(bEnd)
   const [campaignSearch, setCampaignSearch] = useState('')
   const [showPaused, setShowPaused] = useState(false)
+  // Tab is pure client state — all tabs' data ships in props, so switching must be instant
+  // (URL-driven tabs re-ran the whole server page: ~24 queries per click, felt broken).
+  const [tab, setTab] = useState(initialTab)
+  const [isPending, startTransition] = useTransition()
 
   const push = (params: Record<string, string | null | undefined>) => {
     const base: Record<string, string | null | undefined> = {
       profile_id: String(profileId), aStart: dA1, aEnd: dA2, bStart: dB1, bEnd: dB2,
       adType: adType === 'all' ? undefined : adType,
-      tab: tab === 'all' ? undefined : tab,
       ...params,
     }
     const qs = Object.entries(base).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v!)}`).join('&')
-    router.push(`/dashboard/targets?${qs}`)
+    startTransition(() => router.push(`/dashboard/targets?${qs}`))
   }
 
   const applyDates = (w: { aStart: string; aEnd: string; bStart: string; bEnd: string }) => {
@@ -69,9 +72,10 @@ export default function TargetsView({ profileId, aStart, aEnd, bStart, bEnd, adT
     const q = campaignSearch.trim().toLowerCase()
     return groups.filter(g =>
       (showPaused || g.state === 'enabled' || `${g.adType}|${g.id}` === anchoredGroupId) &&
-      (!q || g.name.toLowerCase().includes(q))
+      (!q || g.name.toLowerCase().includes(q)) &&
+      (tab === 'all' || g.targets.some(t => t.targetType === tab) || g.unattributedTerms.length > 0)
     )
-  }, [groups, campaignSearch, showPaused, anchoredGroupId])
+  }, [groups, campaignSearch, showPaused, anchoredGroupId, tab])
 
   const totalTargets = groups.reduce((s, g) => s + g.targets.length, 0)
   const bDays = Math.round((new Date(bEnd + 'T12:00:00Z').getTime() - new Date(bStart + 'T12:00:00Z').getTime()) / 86400000) + 1
@@ -134,14 +138,15 @@ export default function TargetsView({ profileId, aStart, aEnd, bStart, bEnd, adT
                 <input type="date" value={dB2} onChange={e => setDB2(e.target.value)} className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg" />
               </div>
             </div>
-            <button onClick={() => push({ aStart: dA1, aEnd: dA2, bStart: dB1, bEnd: dB2, anchor: null })}
-              className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-orange-500 text-white hover:bg-orange-600">
-              Compare
+            <button onClick={() => push({ aStart: dA1, aEnd: dA2, bStart: dB1, bEnd: dB2, anchor: null })} disabled={isPending}
+              className={`px-4 py-1.5 text-xs font-semibold rounded-lg text-white ${isPending ? 'bg-orange-300 cursor-wait' : 'bg-orange-500 hover:bg-orange-600'}`}>
+              {isPending ? 'Loading…' : 'Compare'}
             </button>
           </div>
+          {isPending && !anchor && <span className="text-[11px] text-orange-500 font-medium animate-pulse">Loading new periods…</span>}
           {anchor && (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-2.5 py-1.5">
-              ⚓ Anchored to a change — A = before, B = after{bDays < 3 ? ` (early read: only ${bDays} day${bDays > 1 ? 's' : ''} after)` : ''}
+              {isPending ? '⏳' : '⚓'} Anchored to a change — A = before, B = after{bDays < 3 ? ` (early read: only ${bDays} day${bDays > 1 ? 's' : ''} after)` : ''}
               <button onClick={() => push({ anchor: null })} className="ml-1 text-orange-400 hover:text-orange-700">✕</button>
             </span>
           )}
@@ -153,7 +158,7 @@ export default function TargetsView({ profileId, aStart, aEnd, bStart, bEnd, adT
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1 bg-white border border-gray-100 rounded-xl p-1 shadow-sm">
           {TABS.filter(t => !(adType === 'sb' && t.key === 'auto')).map(t => (
-            <button key={t.key} onClick={() => push({ tab: t.key === 'all' ? undefined : t.key })}
+            <button key={t.key} onClick={() => setTab(t.key)}
               className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${tab === t.key ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'}`}>
               {t.label}{tabCounts[t.key] ? <span className="ml-1 opacity-60">{tabCounts[t.key]}</span> : null}
             </button>

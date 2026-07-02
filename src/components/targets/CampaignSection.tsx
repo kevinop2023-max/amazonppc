@@ -221,6 +221,7 @@ export default function CampaignSection({ group: g, tab, anchor, defaultOpen, on
         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${g.adType === 'SP' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>{g.adType}</span>
         <span className="font-semibold text-gray-900 text-sm truncate max-w-[320px]" title={g.name}>{g.name}</span>
         {g.state !== 'enabled' && <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{g.state}</span>}
+        {g.outOfBudget && <span className="text-[10px] font-semibold text-red-600 bg-red-50 border border-red-100 px-1.5 py-0.5 rounded">Out of budget</span>}
         <span className="text-[11px] text-gray-400">{fmtD(g.budgetCents)}/day{g.strategy ? ` · ${STRATEGY_LABEL[g.strategy] ?? g.strategy}` : ''}</span>
         <span className="ml-auto flex items-center gap-4 tabular-nums">
           <span className="text-[11px] text-gray-500 whitespace-nowrap">Spend {fmtD(g.aSpend)}<span className="text-gray-300 mx-1">→</span><span className="font-semibold text-gray-800">{fmtD(g.bSpend)}</span></span>
@@ -376,12 +377,12 @@ function TargetRowGroup({ t, expanded, cols, showTopIs, anchor, onAnchor, onTogg
       {expanded && (
         <tr className="border-b border-gray-50">
           <td colSpan={cols} className="px-4 pb-3 pt-1 bg-orange-50/20">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div>
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+              <div className="lg:col-span-2">
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Bid history <span className="normal-case font-normal">(orange lines = real edits from Amazon)</span></p>
                 <BidChart target={t} />
               </div>
-              <div>
+              <div className="lg:col-span-3">
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Search terms triggered by this target ({t.searchTerms.length}{t.omittedTermCount > 0 ? ` of ${t.searchTerms.length + t.omittedTermCount}` : ''})</p>
                 <div className="bg-white rounded-xl border border-gray-100 overflow-auto max-h-72">
                   <table className="w-full">

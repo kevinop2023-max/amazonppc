@@ -217,7 +217,9 @@ async function upsertSbCampaigns(db: any, pid: number, rows: any[]) {
 
 async function upsertSbKeywords(db: any, pid: number, rows: any[]) {
   // keywordText: correct for SB (not 'keyword' which is SP-specific). targetingText fallback for ASIN/product target rows.
-  const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, keyword_text: r.keywordText ?? r.targetingText ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), top_of_search_is: r.topOfSearchImpressionShare != null ? Number(r.topOfSearchImpressionShare) : null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales14d), orders: n(r.purchases14d), units: n(r.unitsSoldClicks14d) }))
+  // SB uses click-attributed 'sales'/'purchases'/'unitsSold' (the old sales14d mapping was the
+  // SP naming — SB reports never returned it, so target sales were hardwired to 0 before 2026-07-03).
+  const r = rows.filter(r => r.keywordId).map(r => ({ profile_id: pid, keyword_id: n(r.keywordId), campaign_id: n(r.campaignId), ad_group_id: r.adGroupId ? n(r.adGroupId) : null, date: r.date, keyword_text: r.keywordText ?? r.targetingText ?? '', match_type: (r.matchType ?? 'broad').toLowerCase(), state: r.adKeywordStatus ?? 'enabled', bid_cents: toCents(r.keywordBid), top_of_search_is: r.topOfSearchImpressionShare != null ? Number(r.topOfSearchImpressionShare) : null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales ?? r.sales14d), orders: n(r.purchases ?? r.purchases14d), units: n(r.unitsSold ?? r.unitsSoldClicks14d) }))
   if (!r.length) return 0
   const { error } = await db.from('sb_keywords').upsert(r, { onConflict: 'profile_id,keyword_id,date' })
   if (error) throw new Error(`sb_keywords: ${error.message}`)

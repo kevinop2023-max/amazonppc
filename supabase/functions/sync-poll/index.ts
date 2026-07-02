@@ -238,8 +238,11 @@ async function upsertSbSearchTerms(db: any, pid: number, rows: any[]) {
       ex.impressions += n(r.impressions); ex.clicks += n(r.clicks)
       ex.spend_cents += toCents(r.cost); ex.sales_cents += toCents(r.sales)
       ex.orders += n(r.purchases); ex.units += n(r.unitsSold)
+      if (ex.keyword_id == null && r.keywordId) ex.keyword_id = n(r.keywordId)
     } else {
-      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: term, targeting_keyword: r.keywordText ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales), orders: n(r.purchases), units: n(r.unitsSold) })
+      // keyword_id links the term to its triggering SB target (report column keywordId,
+      // requested since day one but never stored before 2026-07-02). Re-synced dates backfill.
+      map.set(key, { profile_id: pid, campaign_id: n(r.campaignId), ad_group_id: adGrp, date: r.date, customer_search_term: term, keyword_id: r.keywordId ? n(r.keywordId) : null, targeting_keyword: r.keywordText ?? null, impressions: n(r.impressions), clicks: n(r.clicks), spend_cents: toCents(r.cost), sales_cents: toCents(r.sales), orders: n(r.purchases), units: n(r.unitsSold) })
     }
   }
   const deduped = [...map.values()]

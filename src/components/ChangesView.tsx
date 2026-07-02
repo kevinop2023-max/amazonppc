@@ -18,6 +18,7 @@ export type ChangeEvent = {
   source: string
   entityName: string
   campaignName: string | null
+  metadata?: Record<string, any> | null
 }
 
 type Meta = { label: string; group: string; kind: 'cents' | 'percent' | 'text'; chip: string; dot: string }
@@ -29,6 +30,8 @@ const FIELD_META: Record<string, Meta> = {
   PLACEMENT_TOP:            { label: 'Top of search', group: 'placements', kind: 'percent', chip: 'bg-teal-50 text-teal-700',     dot: '#0d9488' },
   PLACEMENT_PRODUCT_PAGE:   { label: 'Product pages', group: 'placements', kind: 'percent', chip: 'bg-teal-50 text-teal-700',     dot: '#0d9488' },
   PLACEMENT_REST_OF_SEARCH: { label: 'Rest of search',group: 'placements', kind: 'percent', chip: 'bg-teal-50 text-teal-700',     dot: '#0d9488' },
+  PLACEMENT_GROUP:          { label: 'Placement',     group: 'placements', kind: 'percent', chip: 'bg-teal-50 text-teal-700',     dot: '#0d9488' },
+  CREATED:                  { label: 'Created',       group: 'status',     kind: 'text',    chip: 'bg-emerald-50 text-emerald-700', dot: '#059669' },
   SMART_BIDDING_STRATEGY:   { label: 'Bid strategy',  group: 'strategy',   kind: 'text',    chip: 'bg-purple-50 text-purple-700', dot: '#9333ea' },
   STATUS:                   { label: 'Status',        group: 'status',     kind: 'text',    chip: 'bg-gray-100 text-gray-600',    dot: '#6b7280' },
   IN_BUDGET:                { label: 'In budget',     group: 'status',     kind: 'text',    chip: 'bg-gray-100 text-gray-600',    dot: '#6b7280' },
@@ -38,6 +41,19 @@ const FIELD_META: Record<string, Meta> = {
   PORTFOLIO:                { label: 'Portfolio',     group: 'status',     kind: 'text',    chip: 'bg-gray-100 text-gray-600',    dot: '#6b7280' },
 }
 const meta = (field: string): Meta => FIELD_META[field] ?? { label: field, group: 'other', kind: 'text', chip: 'bg-gray-100 text-gray-600', dot: '#6b7280' }
+
+// Change History API reports all placement multipliers as field=PLACEMENT_GROUP, with the
+// specific placement in metadata.placementGroupPosition — resolve it into the label.
+const PLACEMENT_POSITION_LABEL: Record<string, string> = {
+  TOP: 'Top of search', REST_OF_SEARCH: 'Rest of search', DETAIL_PAGE: 'Product pages',
+  PRODUCT_PAGE: 'Product pages', HOME: 'Home page', OTHER: 'Other placements',
+}
+const metaFor = (e: { field: string; metadata?: Record<string, any> | null }): Meta => {
+  const m = meta(e.field)
+  if (e.field !== 'PLACEMENT_GROUP') return m
+  const pos = e.metadata?.placementGroupPosition
+  return pos ? { ...m, label: PLACEMENT_POSITION_LABEL[pos] ?? String(pos) } : m
+}
 
 const ENTITY_LABEL: Record<string, string> = {
   CAMPAIGN: 'Campaign', AD_GROUP: 'Ad group', KEYWORD: 'Keyword', PRODUCT_TARGETING: 'Target', NEGATIVE_KEYWORD: 'Neg KW', AD: 'Ad',
@@ -60,7 +76,7 @@ function fmtDateTime(s: string) {
 }
 
 function ChangeValue({ e }: { e: ChangeEvent }) {
-  const m = meta(e.field)
+  const m = metaFor(e)
   if (m.kind === 'text') {
     return (
       <span className="tabular-nums">
@@ -105,7 +121,10 @@ export default function ChangesView({ events, source }: { events: ChangeEvent[];
     const map = new Map<string, { key: string; e0: ChangeEvent; events: ChangeEvent[] }>()
     for (const e of filtered) {
       if (meta(e.field).kind === 'text') continue
-      const k = `${e.entity_type}|${e.entity_id}|${e.field}`
+      // Placement multipliers share field=PLACEMENT_GROUP — split series by position so
+      // Top-of-search and Rest-of-search don't merge into one chart.
+      const pos = e.field === 'PLACEMENT_GROUP' ? `|${e.metadata?.placementGroupPosition ?? ''}` : ''
+      const k = `${e.entity_type}|${e.entity_id}|${e.field}${pos}`
       if (!map.has(k)) map.set(k, { key: k, e0: e, events: [] })
       map.get(k)!.events.push(e)
     }
@@ -176,7 +195,7 @@ export default function ChangesView({ events, source }: { events: ChangeEvent[];
             </thead>
             <tbody>
               {filtered.map(e => {
-                const m = meta(e.field)
+                const m = metaFor(e)
                 return (
                   <tr key={e.id} className="border-b border-gray-50 hover:bg-gray-50/50">
                     <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDateTime(e.event_ts)}</td>
@@ -208,7 +227,7 @@ export default function ChangesView({ events, source }: { events: ChangeEvent[];
       {events.length > 0 && view === 'charts' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {series.map(s => {
-            const m = meta(s.e0.field)
+            const m = metaFor(s.e0)
             const latest = [...s.events].sort((a, b) => b.event_ts.localeCompare(a.event_ts))[0]
             return (
               <div key={s.key} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">

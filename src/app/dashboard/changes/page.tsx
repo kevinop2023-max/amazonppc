@@ -21,7 +21,7 @@ export default async function ChangesPage({
   if (profileId) {
     const [{ data: raw }, { data: spCamp }, { data: sbCamp }, { data: sdCamp }, { data: kbh }, { data: ag }] = await Promise.all([
       supabase.from('change_events')
-        .select('id, entity_type, entity_id, campaign_id, field, old_value, new_value, old_text, new_text, event_ts, ad_type, source')
+        .select('id, entity_type, entity_id, campaign_id, field, old_value, new_value, old_text, new_text, event_ts, ad_type, source, metadata')
         .eq('profile_id', profileId).order('event_ts', { ascending: false }).range(0, 49999),
       supabase.from('sp_campaigns').select('campaign_id, campaign_name').eq('profile_id', profileId).order('date', { ascending: false }).range(0, 49999),
       supabase.from('sb_campaigns').select('campaign_id, campaign_name').eq('profile_id', profileId).order('date', { ascending: false }).range(0, 49999),
@@ -47,9 +47,11 @@ export default async function ChangesPage({
     }
 
     const nameFor = (e: any): string => {
+      const mdKw = e.metadata?.keyword ? String(e.metadata.keyword) : null   // API events (e.g. CREATED) carry the keyword text
       if (e.entity_type === 'CAMPAIGN') return campName.get(e.entity_id) ?? `Campaign ${e.entity_id}`
-      if (e.entity_type === 'KEYWORD' || e.entity_type === 'PRODUCT_TARGETING') return kwName.get(e.entity_id) ?? `${e.entity_type === 'KEYWORD' ? 'Keyword' : 'Target'} ${e.entity_id}`
+      if (e.entity_type === 'KEYWORD' || e.entity_type === 'PRODUCT_TARGETING') return kwName.get(e.entity_id) ?? mdKw ?? `${e.entity_type === 'KEYWORD' ? 'Keyword' : 'Target'} ${e.entity_id}`
       if (e.entity_type === 'AD_GROUP') return agName.get(e.entity_id) ?? `Ad group ${e.entity_id}`
+      if (e.entity_type === 'NEGATIVE_KEYWORD' && mdKw) return mdKw
       return `${e.entity_type} ${e.entity_id}`
     }
 
@@ -68,6 +70,7 @@ export default async function ChangesPage({
       source: e.source,
       entityName: nameFor(e),
       campaignName: e.campaign_id ? (campName.get(e.campaign_id) ?? null) : null,
+      metadata: e.metadata ?? null,
     }))
 
     const srcs = new Set(events.map(e => e.source))

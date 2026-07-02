@@ -278,7 +278,7 @@ export default async function ComparisonPage({
   const winEnd   = bEnd   > aEnd   ? bEnd   : aEnd
   const [{ data: chgRaw }, { data: agRows }] = await Promise.all([
     supabase.from('change_events')
-      .select('id, entity_type, entity_id, campaign_id, field, old_value, new_value, old_text, new_text, event_ts, ad_type, source')
+      .select('id, entity_type, entity_id, campaign_id, field, old_value, new_value, old_text, new_text, event_ts, ad_type, source, metadata')
       .eq('profile_id', profileId).gte('event_ts', winStart).lte('event_ts', winEnd + 'T23:59:59Z')
       .order('event_ts', { ascending: false }).range(0, 49999),
     supabase.from('sp_ad_groups').select('ad_group_id, ad_group_name').eq('profile_id', profileId).order('date', { ascending: false }).range(0, 49999),
@@ -289,8 +289,9 @@ export default async function ComparisonPage({
   const agNameMap = new Map<string, string>()
   for (const a of agRows ?? []) { const key = String(a.ad_group_id); if (!agNameMap.has(key) && a.ad_group_name) agNameMap.set(key, a.ad_group_name) }
   const nameFor = (e: any) => e.entity_type === 'CAMPAIGN' ? (campNameMap.get(Number(e.entity_id)) ?? `Campaign ${e.entity_id}`)
-    : (e.entity_type === 'KEYWORD' || e.entity_type === 'PRODUCT_TARGETING') ? (kwNameMap.get(e.entity_id) ?? `${e.entity_type === 'KEYWORD' ? 'Keyword' : 'Target'} ${e.entity_id}`)
+    : (e.entity_type === 'KEYWORD' || e.entity_type === 'PRODUCT_TARGETING') ? (kwNameMap.get(e.entity_id) ?? (e.metadata?.keyword ? String(e.metadata.keyword) : `${e.entity_type === 'KEYWORD' ? 'Keyword' : 'Target'} ${e.entity_id}`))
     : e.entity_type === 'AD_GROUP' ? (agNameMap.get(e.entity_id) ?? `Ad group ${e.entity_id}`)
+    : (e.entity_type === 'NEGATIVE_KEYWORD' && e.metadata?.keyword) ? String(e.metadata.keyword)
     : `${e.entity_type} ${e.entity_id}`
 
   const changeEvents: ChangeEvent[] = (chgRaw ?? []).map((e: any) => ({
@@ -298,6 +299,7 @@ export default async function ComparisonPage({
     old_value: e.old_value == null ? null : Number(e.old_value), new_value: e.new_value == null ? null : Number(e.new_value),
     old_text: e.old_text, new_text: e.new_text, event_ts: e.event_ts, ad_type: e.ad_type, source: e.source,
     entityName: nameFor(e), campaignName: e.campaign_id ? (campNameMap.get(Number(e.campaign_id)) ?? null) : null,
+    metadata: e.metadata ?? null,
   }))
 
   return (

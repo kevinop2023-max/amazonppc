@@ -59,7 +59,7 @@ export default async function CampaignDetailPage({
   const noData = Promise.resolve({ data: [] as any[] })
   const [{ data: rows }, { data: chgRaw }, { data: agRows }, { data: kbh }, { data: agPerf }, { data: placePerf }] = await Promise.all([
     supabase.from(table).select(metaCols).eq('profile_id', profileId).eq('campaign_id', campaignId).order('date', { ascending: false }).range(0, 49999),
-    supabase.from('change_events').select('id, entity_type, entity_id, campaign_id, field, old_value, new_value, old_text, new_text, event_ts, ad_type, source').eq('profile_id', profileId).eq('campaign_id', campaignId).order('event_ts', { ascending: false }).range(0, 49999),
+    supabase.from('change_events').select('id, entity_type, entity_id, campaign_id, field, old_value, new_value, old_text, new_text, event_ts, ad_type, source, metadata').eq('profile_id', profileId).eq('campaign_id', campaignId).order('event_ts', { ascending: false }).range(0, 49999),
     adType === 'SP' ? supabase.from('sp_ad_groups').select('ad_group_id, ad_group_name, state, default_bid_cents, date').eq('profile_id', profileId).eq('campaign_id', campaignId).order('date', { ascending: false }).range(0, 49999) : noData,
     supabase.from('keyword_bid_history').select('keyword_id, keyword_text, match_type, ad_type, bid_cents, recorded_date').eq('profile_id', profileId).order('recorded_date', { ascending: true }).range(0, 49999),
     adType === 'SP' ? supabase.from('ad_group_performance').select('ad_group_id, spend_cents, sales_cents, orders, clicks').eq('profile_id', profileId).eq('campaign_id', campaignId).gte('date', startStr).lte('date', endStr).range(0, 49999) : noData,
@@ -104,8 +104,9 @@ export default async function CampaignDetailPage({
   const agNameMap = new Map<string, string>()
   for (const a of agRows ?? []) { const key = String(a.ad_group_id); if (!agNameMap.has(key) && a.ad_group_name) agNameMap.set(key, a.ad_group_name) }
   const nameFor = (e: any) => e.entity_type === 'CAMPAIGN' ? name
-    : (e.entity_type === 'KEYWORD' || e.entity_type === 'PRODUCT_TARGETING') ? (kwName.get(e.entity_id) ?? `${e.entity_type === 'KEYWORD' ? 'Keyword' : 'Target'} ${e.entity_id}`)
+    : (e.entity_type === 'KEYWORD' || e.entity_type === 'PRODUCT_TARGETING') ? (kwName.get(e.entity_id) ?? (e.metadata?.keyword ? String(e.metadata.keyword) : `${e.entity_type === 'KEYWORD' ? 'Keyword' : 'Target'} ${e.entity_id}`))
     : e.entity_type === 'AD_GROUP' ? (agNameMap.get(e.entity_id) ?? `Ad group ${e.entity_id}`)
+    : (e.entity_type === 'NEGATIVE_KEYWORD' && e.metadata?.keyword) ? String(e.metadata.keyword)
     : `${e.entity_type} ${e.entity_id}`
 
   const chg = (chgRaw ?? []) as any[]
@@ -114,6 +115,7 @@ export default async function CampaignDetailPage({
     old_value: e.old_value == null ? null : Number(e.old_value), new_value: e.new_value == null ? null : Number(e.new_value),
     old_text: e.old_text, new_text: e.new_text, event_ts: e.event_ts, ad_type: e.ad_type, source: e.source,
     entityName: nameFor(e), campaignName: name,
+    metadata: e.metadata ?? null,
   }))
 
   // Chart markers — changes whose date falls in the visible range

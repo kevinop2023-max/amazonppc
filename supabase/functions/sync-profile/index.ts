@@ -494,6 +494,52 @@ async function syncChangeHistory(token: string, pid: string, db: any, numericPid
   console.log(`[sync] change-history: fetched ${all.length}, mapped ${rows.length} (from ${new Date(fromMs).toISOString()})`)
 }
 
+// SB theme targets ("Keywords related to your brand / landing pages") never appear in
+// performance reports until they get traffic, so zero-activity themes were invisible.
+// POST /sb/themes/list returns ALL themes with bid/state. NOTE: the documented request
+// content type (application/vnd.sbthemeslistrequest.v3+json) is WRONG — the server 415s
+// on it. Working contract (probed 2026-07-02): Content-Type: application/json +
+// Accept: application/vnd.sbthemeslistresponse.v3+json + filters as {include:[...]}.
+async function syncSbThemes(token: string, pid: string, db: any, numericPid: number) {
+  const res = await fetch(`${AMAZON_ADS_BASE}/sb/themes/list`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Amazon-Advertising-API-ClientId': AMAZON_LWA_CLIENT_ID,
+      'Amazon-Advertising-API-Scope': pid,
+      'Content-Type': 'application/json',
+      'Accept': 'application/vnd.sbthemeslistresponse.v3+json',
+    },
+    body: JSON.stringify({}),
+  })
+  if (!res.ok) { console.log(`[sync] sb-themes: HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`); return }
+  const themes: any[] = (await res.json())?.themes ?? []
+  if (!themes.length) return
+  const today = new Date().toISOString().split('T')[0]
+  const label = (t: any) => String(t.themeType ?? 'theme').toLowerCase().replace(/_/g, '-')
+
+  // Insert-only (ignoreDuplicates): if today's report already wrote a metrics row for a
+  // theme, keep it — this only fills in themes the reports omitted (zero traffic).
+  const kwRows = themes.map(t => ({
+    profile_id: numericPid, keyword_id: Number(t.themeId), ad_group_id: t.adGroupId ? Number(t.adGroupId) : null,
+    campaign_id: Number(t.campaignId), date: today, keyword_text: label(t), match_type: 'theme',
+    state: (t.state ?? 'enabled').toLowerCase(), bid_cents: Math.round((t.bid ?? 0) * 100),
+  }))
+  const { error } = await db.from('sb_keywords').upsert(kwRows, { onConflict: 'profile_id,keyword_id,date', ignoreDuplicates: true })
+  if (error) console.log(`[sync] sb-themes upsert: ${error.message}`)
+
+  // Bid history so the Targets page shows prev→current for theme bids too.
+  const bidRows = themes.filter(t => (t.bid ?? 0) > 0).map(t => ({
+    profile_id: numericPid, keyword_id: Number(t.themeId), ad_type: 'sb', keyword_text: label(t),
+    match_type: 'theme', campaign_id: Number(t.campaignId), bid_cents: Math.round(t.bid * 100), recorded_date: today,
+  }))
+  if (bidRows.length) {
+    const { error: e2 } = await db.from('keyword_bid_history').upsert(bidRows, { onConflict: 'profile_id,keyword_id,ad_type,recorded_date' })
+    if (e2) console.log(`[sync] sb-themes bid history: ${e2.message}`)
+  }
+  console.log(`[sync] sb-themes: ${themes.length} themes listed`)
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -522,6 +568,7 @@ Deno.serve(async (req) => {
       // No report creation (so no heavy rate usage) — used for testing + on-demand change refresh.
       await Promise.allSettled([
         syncCampaignStates(tk, String(prof.profile_id), db, prof.profile_id).catch(e => console.log(`[sync] states (history_only): ${e}`)),
+        syncSbThemes(tk, String(prof.profile_id), db, prof.profile_id).catch(e => console.log(`[sync] sb-themes (history_only): ${e}`)),
         syncChangeHistory(tk, String(prof.profile_id), db, prof.profile_id).catch(e => console.log(`[sync] history (history_only): ${e}`)),
       ])
       // RETIRED 2026-07-02: snapshot-diff — Change History API is now the sole source (see sync-poll note).
@@ -571,10 +618,11 @@ Deno.serve(async (req) => {
 
     const pid = String(profile.profile_id)
 
-    // Snapshot current campaign states + negative keywords + ingest change history — non-fatal if any fails.
+    // Snapshot current campaign states + negative keywords + SB themes + change history — non-fatal if any fails.
     await Promise.allSettled([
       syncCampaignStates(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] campaign-states skipped: ${e}`)),
       syncNegativeKeywords(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] negative-keywords skipped: ${e}`)),
+      syncSbThemes(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] sb-themes skipped: ${e}`)),
       syncChangeHistory(token, pid, db, profile.profile_id).catch(e => console.log(`[sync] change-history skipped: ${e}`)),
     ])
 

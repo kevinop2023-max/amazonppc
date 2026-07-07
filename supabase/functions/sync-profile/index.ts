@@ -708,15 +708,16 @@ Deno.serve(async (req) => {
         // Old code used maxRetries=3 (15+30+60s) for sbCamp/sbKw/sbSt — that alone could timeout.
         sbAttr = await createReport(token, pid, 'SB Attr Purch', 'SPONSORED_BRANDS', 'sbPurchasedProduct', ['purchasedAsin'], SB_ATTR, startDate, endDate, undefined, 1)
         await new Promise(r => setTimeout(r, 3000))
-        // sbCamp is NON-optional (its absence = Partial). One retry guards against transient 429.
-        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 1)
+        // sbCamp is NON-optional (its absence = Partial). Two retries (15+30s) — on 2026-07-06 the
+        // SB creation bucket 429'd out across all profiles running concurrently (now also staggered in cron).
+        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 2)
         await new Promise(r => setTimeout(r, 5000))
         sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate, undefined, 0)
         await new Promise(r => setTimeout(r, 5000))
         sbSt   = await createReport(token, pid, 'SB Terms',     'SPONSORED_BRANDS', 'sbSearchTerm', ['searchTerm'], SB_ST,   startDate, endDate, undefined, 0)
       } else {
-        // Batch 2: sbAttr LAST. sbCamp gets one retry (NON-optional → its absence = Partial).
-        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 1)
+        // Batch 2: sbAttr LAST. sbCamp gets two retries (NON-optional → its absence = Partial).
+        sbCamp = await createReport(token, pid, 'SB Campaigns', 'SPONSORED_BRANDS', 'sbCampaigns',  ['campaign'],   SB_CAMP, startDate, endDate, undefined, 2)
         await new Promise(r => setTimeout(r, 5000))
         sbKw   = await createReport(token, pid, 'SB Keywords',  'SPONSORED_BRANDS', 'sbTargeting',  ['targeting'],  SB_KW,   startDate, endDate, undefined, 0)
         await new Promise(r => setTimeout(r, 5000))
